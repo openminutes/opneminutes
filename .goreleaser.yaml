@@ -10,3 +10,14 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w -X openminutes/cmd.version={{ .Tag }} -X openminutes/cmd.commit={{ .FullCommit }}
+
+changelog:
+  use: git
+
+release:
+  footer: |
+    ## Installation
+
+    ```sh
+    npm install @openminutes/cli
+    ```
