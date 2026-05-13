@@ -1,0 +1,12 @@
+version: 2
+
+project_name: openminutes
+
+builds:
+  - id: openminutes
+    main: ./main.go
+    binary: openminutes
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X openminutes/cmd.version={{ .Tag }} -X openminutes/cmd.commit={{ .FullCommit }}
