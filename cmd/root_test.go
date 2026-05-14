@@ -2,10 +2,13 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"openminutes/internal/minutes"
 
 	"github.com/spf13/cobra"
 )
@@ -91,6 +94,16 @@ func TestRootCommandUnknownCommand(t *testing.T) {
 }
 
 func TestRootCommandSubcommands(t *testing.T) {
+	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
+			return []minutes.Minute{{
+				ObjectToken: "token-1",
+				Topic:       "Root",
+				URL:         "https://example.test/root",
+			}}, nil
+		}), nil
+	})
+
 	tests := []struct {
 		name string
 		args []string
@@ -104,7 +117,7 @@ func TestRootCommandSubcommands(t *testing.T) {
 		{
 			name: "list",
 			args: []string{"list"},
-			want: "list called\n",
+			want: "token-1 Root https://example.test/root\n",
 		},
 		{
 			name: "upload",
@@ -163,6 +176,15 @@ func TestRootCommandSubcommandUsesEnvWithMissingManualConfig(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "custom", "config.toml")
 	t.Setenv("OPENMINUTES_REGION", "larksuite")
 	t.Setenv("OPENMINUTES_COOKIE", "session=env")
+	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
+			return []minutes.Minute{{
+				ObjectToken: "token-env",
+				Topic:       "Env",
+				URL:         "https://example.test/env",
+			}}, nil
+		}), nil
+	})
 
 	stdout, stderr, err := executeCommand("--config", configPath, "list")
 	if err != nil {
@@ -173,8 +195,8 @@ func TestRootCommandSubcommandUsesEnvWithMissingManualConfig(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
 
-	if stdout != "list called\n" {
-		t.Fatalf("stdout = %q, want list called", stdout)
+	if stdout != "token-env Env https://example.test/env\n" {
+		t.Fatalf("stdout = %q, want mocked list output", stdout)
 	}
 
 	data, readErr := os.ReadFile(configPath)
