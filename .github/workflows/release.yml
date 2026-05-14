@@ -5,12 +5,13 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,3 +31,44 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-npm:
+    runs-on: ubuntu-latest
+    needs: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+          registry-url: https://registry.npmjs.org
+
+      - name: Set up npm
+        run: npm install --global npm@11.5.1
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/release-assets
+          gh release download "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --dir dist/release-assets \
+            --pattern 'openminutes_*'
+
+      - name: Build npm packages
+        run: node scripts/build-npm-packages.js --version "${GITHUB_REF_NAME}" --artifacts dist/release-assets
+
+      - name: Publish platform packages
+        run: |
+          for package_dir in dist/npm/platforms/*; do
+            (cd "$package_dir" && npm publish --provenance --access public)
+          done
+
+      - name: Publish main package
+        run: cd dist/npm/main && npm publish --provenance --access public
