@@ -1,6 +1,3 @@
-/*
-Copyright © 2026 NAME HERE <EMAIL ADDRESS>
-*/
 package cmd
 
 import (
@@ -12,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	apperrors "openminutes/internal/errors"
 	"openminutes/internal/logic"
 	"openminutes/internal/minutes"
 
@@ -68,13 +66,13 @@ when --output is not used, inline exported content.`,
 
 func validateGetArgs(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
-		return errors.New("object token is required")
+		return apperrors.New(apperrors.KindValidation, "object token is required")
 	}
 	if len(args) > 1 {
-		return errors.New("get accepts exactly one token")
+		return apperrors.New(apperrors.KindValidation, "get accepts exactly one token")
 	}
 	if strings.TrimSpace(args[0]) == "" {
-		return errors.New("object token is required")
+		return apperrors.New(apperrors.KindValidation, "object token is required")
 	}
 
 	return nil
@@ -97,7 +95,7 @@ func runGetCommand(cmd *cobra.Command, args []string) error {
 	switch fileType {
 	case "txt", "srt":
 	default:
-		return fmt.Errorf("unsupported file_type %q: must be txt or srt", fileType)
+		return apperrors.Errorf(apperrors.KindValidation, "unsupported file_type %q: must be txt or srt", fileType)
 	}
 
 	outputPath, err := getOutputPath(cmd, token, fileType)
@@ -222,7 +220,7 @@ func runGetCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Saved %s to %s\n", token, outputPath); err != nil {
-		return err
+		return apperrors.Wrap(apperrors.KindFileSystem, err)
 	}
 
 	logger.Debug("get command completed",
@@ -248,7 +246,7 @@ func writeGetJSON(cmd *cobra.Command, output getJSONOutput) error {
 	encoder := json.NewEncoder(cmd.OutOrStdout())
 	encoder.SetIndent("", "  ")
 
-	return encoder.Encode(output)
+	return apperrors.Wrap(apperrors.KindFileSystem, encoder.Encode(output))
 }
 
 func getOutputPath(cmd *cobra.Command, _ string, _ string) (string, error) {
@@ -260,7 +258,7 @@ func getOutputPath(cmd *cobra.Command, _ string, _ string) (string, error) {
 	outputFlag := cmd.Flags().Lookup("output")
 	if outputFlag != nil && outputFlag.Changed {
 		if strings.TrimSpace(outputPath) == "" {
-			return "", errors.New("output path is required")
+			return "", apperrors.New(apperrors.KindValidation, "output path is required")
 		}
 		return outputPath, nil
 	}
@@ -271,10 +269,10 @@ func getOutputPath(cmd *cobra.Command, _ string, _ string) (string, error) {
 func writeGetStdout(stdout io.Writer, data []byte) error {
 	n, err := stdout.Write(data)
 	if err != nil {
-		return err
+		return apperrors.Wrap(apperrors.KindFileSystem, err)
 	}
 	if n != len(data) {
-		return io.ErrShortWrite
+		return apperrors.Wrap(apperrors.KindFileSystem, io.ErrShortWrite)
 	}
 
 	if len(data) > 0 && data[len(data)-1] == '\n' {
@@ -283,10 +281,10 @@ func writeGetStdout(stdout io.Writer, data []byte) error {
 
 	n, err = stdout.Write([]byte("\n"))
 	if err != nil {
-		return err
+		return apperrors.Wrap(apperrors.KindFileSystem, err)
 	}
 	if n != 1 {
-		return io.ErrShortWrite
+		return apperrors.Wrap(apperrors.KindFileSystem, io.ErrShortWrite)
 	}
 
 	return nil
@@ -294,9 +292,9 @@ func writeGetStdout(stdout io.Writer, data []byte) error {
 
 func ensureGetOutputDoesNotExist(outputPath string) error {
 	if _, err := os.Stat(outputPath); err == nil {
-		return fmt.Errorf("output file %q already exists", outputPath)
+		return apperrors.Errorf(apperrors.KindFileSystem, "output file %q already exists", outputPath)
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("stat output file %q: %w", outputPath, err)
+		return apperrors.Wrapf(apperrors.KindFileSystem, err, "stat output file %q", outputPath)
 	}
 
 	return nil
@@ -315,16 +313,16 @@ func writeGetOutputFile(outputPath string, data []byte) (err error) {
 		}
 		if closeErr != nil {
 			_ = os.Remove(outputPath)
-			err = closeErr
+			err = apperrors.Wrap(apperrors.KindFileSystem, closeErr)
 		}
 	}()
 
 	n, err := file.Write(data)
 	if err != nil {
-		return err
+		return apperrors.Wrap(apperrors.KindFileSystem, err)
 	}
 	if n != len(data) {
-		return io.ErrShortWrite
+		return apperrors.Wrap(apperrors.KindFileSystem, io.ErrShortWrite)
 	}
 
 	return nil

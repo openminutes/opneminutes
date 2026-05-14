@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	apperrors "openminutes/internal/errors"
 	"openminutes/internal/minutes"
 )
 
@@ -633,6 +634,9 @@ func TestListCommandRejectsInvalidPaginationOptions(t *testing.T) {
 			}
 			if err.Error() != tt.wantErr {
 				t.Fatalf("Execute() error = %q, want %q", err.Error(), tt.wantErr)
+			}
+			if !apperrors.IsKind(err, apperrors.KindValidation) {
+				t.Fatalf("Execute() error kind = %q, want validation", apperrors.KindOf(err))
 			}
 			if clientCreated {
 				t.Fatal("client created for invalid pagination options")

@@ -2,11 +2,12 @@ package media
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	apperrors "openminutes/internal/errors"
 
 	"go.uber.org/zap"
 )
@@ -41,21 +42,21 @@ func ValidateUploadFile(filePath string, logger *zap.Logger) error {
 	info, err := os.Stat(filePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("file %q does not exist", filePath)
+			return apperrors.Errorf(apperrors.KindFileSystem, "file %q does not exist", filePath)
 		}
-		return fmt.Errorf("stat file %q: %w", filePath, err)
+		return apperrors.Wrapf(apperrors.KindFileSystem, err, "stat file %q", filePath)
 	}
 	if info.IsDir() {
-		return fmt.Errorf("file %q is a directory", filePath)
+		return apperrors.Errorf(apperrors.KindValidation, "file %q is a directory", filePath)
 	}
 
 	extension := strings.ToLower(filepath.Ext(filePath))
 	if _, ok := SupportedUploadExtensions[extension]; !ok {
-		return fmt.Errorf("unsupported file extension %q", extension)
+		return apperrors.Errorf(apperrors.KindValidation, "unsupported file extension %q", extension)
 	}
 
 	if info.Size() > MaxUploadFileSize {
-		return fmt.Errorf("file size %d exceeds maximum %d bytes", info.Size(), int64(MaxUploadFileSize))
+		return apperrors.Errorf(apperrors.KindValidation, "file size %d exceeds maximum %d bytes", info.Size(), int64(MaxUploadFileSize))
 	}
 
 	duration, known, err := ProbeUploadDuration(filePath, extension)
@@ -75,7 +76,7 @@ func ValidateUploadFile(filePath string, logger *zap.Logger) error {
 		return nil
 	}
 	if duration > MaxUploadDuration {
-		return fmt.Errorf("file duration %s exceeds maximum %s", duration, MaxUploadDuration)
+		return apperrors.Errorf(apperrors.KindValidation, "file duration %s exceeds maximum %s", duration, MaxUploadDuration)
 	}
 
 	logger.Debug("upload duration probe completed",

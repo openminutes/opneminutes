@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	apperrors "openminutes/internal/errors"
 	"openminutes/internal/media"
 
 	"go.uber.org/zap"
@@ -205,7 +205,7 @@ func (c *Client) planUploadBlocks(upload *media.Source, session *uploadSession) 
 			zap.Int("prepared_num_blocks", session.prepare.NumBlocks),
 			zap.Int("computed_num_blocks", len(blocks)),
 		)
-		return nil, fmt.Errorf("prepare response num_blocks=%d does not match computed blocks=%d", session.prepare.NumBlocks, len(blocks))
+		return nil, apperrors.Errorf(apperrors.KindRemote, "prepare response num_blocks=%d does not match computed blocks=%d", session.prepare.NumBlocks, len(blocks))
 	}
 
 	return blocks, nil
@@ -318,7 +318,7 @@ func (c *Client) getUploadToken(ctx context.Context, fileInfo, language string) 
 			zap.String("file_info", fileInfo),
 			zap.String("reason", "missing_upload_token"),
 		)
-		return "", fmt.Errorf("quota response missing upload_token for %s", fileInfo)
+		return "", apperrors.Errorf(apperrors.KindRemote, "quota response missing upload_token for %s", fileInfo)
 	}
 
 	c.logger.Debug("upload token request completed",
@@ -409,7 +409,7 @@ func (c *Client) getNeededUploadBlocks(ctx context.Context, uploadID string, blo
 			zap.String("upload_id", uploadID),
 			zap.String("reason", "missing_needed_upload_blocks"),
 		)
-		return nil, errors.New("upload blocks response missing needed_upload_blocks")
+		return nil, apperrors.New(apperrors.KindRemote, "upload blocks response missing needed_upload_blocks")
 	}
 
 	c.logger.Debug("upload blocks request completed",
@@ -604,15 +604,15 @@ type prepareUploadResponse struct {
 func (r prepareUploadResponse) validate() error {
 	switch {
 	case r.VHID == "":
-		return errors.New("prepare response missing vhid")
+		return apperrors.New(apperrors.KindRemote, "prepare response missing vhid")
 	case r.ObjectToken == "":
-		return errors.New("prepare response missing object_token")
+		return apperrors.New(apperrors.KindRemote, "prepare response missing object_token")
 	case r.UploadID == "":
-		return errors.New("prepare response missing upload_id")
+		return apperrors.New(apperrors.KindRemote, "prepare response missing upload_id")
 	case r.BlockSize <= 0:
-		return errors.New("prepare response missing block_size")
+		return apperrors.New(apperrors.KindRemote, "prepare response missing block_size")
 	case r.NumBlocks < 0:
-		return errors.New("prepare response invalid num_blocks")
+		return apperrors.New(apperrors.KindRemote, "prepare response invalid num_blocks")
 	default:
 		return nil
 	}

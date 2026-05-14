@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	apperrors "openminutes/internal/errors"
 	"openminutes/internal/minutes"
 
 	"github.com/spf13/viper"
@@ -92,7 +93,7 @@ func Load(path string, logger *zap.Logger) (Config, error) {
 			zap.String("path", path),
 			zap.Error(err),
 		)
-		return Config{}, err
+		return Config{}, apperrors.Wrap(apperrors.KindConfig, err)
 	}
 
 	config := Config{
@@ -110,7 +111,7 @@ func Load(path string, logger *zap.Logger) (Config, error) {
 			zap.Bool("cookie_env_override", envPresent("OPENMINUTES_COOKIE")),
 			zap.Error(err),
 		)
-		return Config{}, err
+		return Config{}, apperrors.Wrap(apperrors.KindConfig, err)
 	}
 	config.SpaceBaseURL, _, err = minutes.NormalizeBaseURLOrDefault("space_base_url", v.GetString("space_base_url"), DefaultSpaceBaseURL)
 	if err != nil {
@@ -123,7 +124,7 @@ func Load(path string, logger *zap.Logger) (Config, error) {
 			zap.Bool("cookie_env_override", envPresent("OPENMINUTES_COOKIE")),
 			zap.Error(err),
 		)
-		return Config{}, err
+		return Config{}, apperrors.Wrap(apperrors.KindConfig, err)
 	}
 	if err := Validate(config); err != nil {
 		logger.Debug("config validation failed",
@@ -195,15 +196,15 @@ func ensureFile(
 		logger.Debug("config file found", zap.String("path", path))
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+		return apperrors.Wrap(apperrors.KindFileSystem, err)
 	}
 
 	logger.Debug("config file missing, creating template", zap.String("path", path))
 	if err := mkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+		return apperrors.Wrap(apperrors.KindFileSystem, err)
 	}
 
-	return writeFile(path, []byte(Template), 0o600)
+	return apperrors.Wrap(apperrors.KindFileSystem, writeFile(path, []byte(Template), 0o600))
 }
 
 func Validate(config Config) error {
@@ -215,7 +216,7 @@ func Validate(config Config) error {
 	}
 
 	if strings.TrimSpace(config.Cookie) == "" {
-		return errors.New("cookie is required")
+		return apperrors.New(apperrors.KindAuth, "cookie is required")
 	}
 
 	return nil

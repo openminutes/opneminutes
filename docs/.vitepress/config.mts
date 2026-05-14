@@ -45,7 +45,7 @@ export default defineConfig({
     ],
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/openminutes/opneminutes' }
+      { icon: 'github', link: 'https://github.com/openminutes/openminutes' }
     ]
   }
 })

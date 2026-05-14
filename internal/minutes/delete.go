@@ -2,12 +2,12 @@ package minutes
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+
+	apperrors "openminutes/internal/errors"
 
 	"go.uber.org/zap"
 )
@@ -18,7 +18,7 @@ const defaultDeleteSpaceName = 1
 func (c *Client) DeleteMinute(ctx context.Context, objectToken string, options DeleteOptions) error {
 	objectToken = strings.TrimSpace(objectToken)
 	if objectToken == "" {
-		return errors.New("object token is required")
+		return apperrors.New(apperrors.KindValidation, "object token is required")
 	}
 
 	spaceName, err := deleteSpaceName(options.SpaceName)
@@ -95,7 +95,7 @@ func (c *Client) postMinutesForm(ctx context.Context, path string, form url.Valu
 
 func deleteSpaceName(spaceName int) (int, error) {
 	if spaceName < 0 {
-		return 0, fmt.Errorf("space name must be greater than 0")
+		return 0, apperrors.New(apperrors.KindValidation, "space name must be greater than 0")
 	}
 	if spaceName == 0 {
 		return defaultDeleteSpaceName, nil

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	apperrors "openminutes/internal/errors"
+
 	"go.uber.org/zap"
 )
 
@@ -35,7 +37,7 @@ func NewClient(config Config) (*Client, error) {
 
 	cookie := strings.TrimSpace(config.Cookie)
 	if cookie == "" {
-		err := errors.New("cookie is required")
+		err := apperrors.New(apperrors.KindAuth, "cookie is required")
 		logger.Debug("client initialization failed",
 			zap.Bool("cookie_present", false),
 			zap.Error(err),
@@ -65,7 +67,7 @@ func NewClient(config Config) (*Client, error) {
 			zap.Bool("base_url_defaulted", baseURLDefaulted),
 			zap.Error(err),
 		)
-		return nil, err
+		return nil, apperrors.Wrap(apperrors.KindConfig, err)
 	}
 
 	spaceBaseURL, spaceBaseURLDefaulted, err := NormalizeBaseURLOrDefault("space_base_url", config.SpaceBaseURL, defaultSpaceBaseURL)
@@ -75,7 +77,7 @@ func NewClient(config Config) (*Client, error) {
 			zap.Bool("space_base_url_defaulted", spaceBaseURLDefaulted),
 			zap.Error(err),
 		)
-		return nil, err
+		return nil, apperrors.Wrap(apperrors.KindConfig, err)
 	}
 
 	userAgent := strings.TrimSpace(config.UserAgent)
@@ -121,13 +123,13 @@ func csrfTokenFromCookie(cookie string) (string, error) {
 		}
 	}
 
-	return "", errors.New("cookie does not contain bv_csrf_token")
+	return "", apperrors.New(apperrors.KindAuth, "cookie does not contain bv_csrf_token")
 }
 
 func (c *Client) newRequest(ctx context.Context, method, rawURL string, body io.Reader) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
 	if err != nil {
-		return nil, err
+		return nil, apperrors.Wrap(apperrors.KindRemote, err)
 	}
 
 	req.Header.Set("cookie", c.cookie)
@@ -168,6 +170,7 @@ func (c *Client) doJSON(req *http.Request, result any) error {
 	resp, err := c.httpClient.Do(req)
 	duration := time.Since(start)
 	if err != nil {
+		err = apperrors.Wrap(apperrors.KindRemote, err)
 		c.logHTTPRequestFailed(req, duration, err)
 		return err
 	}
@@ -187,6 +190,7 @@ func (c *Client) doJSON(req *http.Request, result any) error {
 			c.logHTTPCompleted(req, resp, duration, body.bytesRead)
 			return nil
 		}
+		err = apperrors.Wrap(apperrors.KindRemote, err)
 		c.logHTTPJSONDecodeFailed(req, resp, duration, body.bytesRead, err)
 		return err
 	}
@@ -212,13 +216,14 @@ func (c *Client) doJSON(req *http.Request, result any) error {
 	}
 	if len(envelope.Data) == 0 || bytes.Equal(envelope.Data, []byte("null")) {
 		duration = time.Since(start)
-		err := fmt.Errorf("%s %s: response missing data", req.Method, req.URL.RequestURI())
+		err := apperrors.Errorf(apperrors.KindRemote, "%s %s: response missing data", req.Method, req.URL.RequestURI())
 		c.logHTTPJSONDecodeFailed(req, resp, duration, body.bytesRead, err)
 		return err
 	}
 
 	if err := json.Unmarshal(envelope.Data, result); err != nil {
 		duration = time.Since(start)
+		err = apperrors.Wrap(apperrors.KindRemote, err)
 		c.logHTTPJSONDecodeFailed(req, resp, duration, body.bytesRead, err)
 		return err
 	}
@@ -233,6 +238,7 @@ func (c *Client) doRaw(req *http.Request) ([]byte, error) {
 	resp, err := c.httpClient.Do(req)
 	duration := time.Since(start)
 	if err != nil {
+		err = apperrors.Wrap(apperrors.KindRemote, err)
 		c.logHTTPRequestFailed(req, duration, err)
 		return nil, err
 	}
@@ -247,6 +253,7 @@ func (c *Client) doRaw(req *http.Request) ([]byte, error) {
 	data, err := io.ReadAll(resp.Body)
 	duration = time.Since(start)
 	if err != nil {
+		err = apperrors.Wrap(apperrors.KindRemote, err)
 		c.logHTTPReadFailed(req, resp, duration, 0, err)
 		return nil, err
 	}
@@ -277,6 +284,7 @@ func (c *Client) doStream(req *http.Request, dst io.Writer) error {
 	resp, err := c.httpClient.Do(req)
 	duration := time.Since(start)
 	if err != nil {
+		err = apperrors.Wrap(apperrors.KindRemote, err)
 		c.logHTTPRequestFailed(req, duration, err)
 		return err
 	}
@@ -291,6 +299,7 @@ func (c *Client) doStream(req *http.Request, dst io.Writer) error {
 	bytesWritten, err := io.Copy(dst, resp.Body)
 	duration = time.Since(start)
 	if err != nil {
+		err = apperrors.Wrap(apperrors.KindRemote, err)
 		c.logHTTPReadFailed(req, resp, duration, bytesWritten, err)
 		return err
 	}
@@ -300,21 +309,21 @@ func (c *Client) doStream(req *http.Request, dst io.Writer) error {
 }
 
 func httpStatusError(req *http.Request, resp *http.Response) error {
-	return &HTTPStatusError{
+	return apperrors.Wrap(apperrors.KindRemote, &HTTPStatusError{
 		Method:     req.Method,
 		RequestURI: req.URL.RequestURI(),
 		Status:     resp.Status,
 		StatusCode: resp.StatusCode,
-	}
+	})
 }
 
 func serverCodeError(req *http.Request, code int, message string) error {
-	return &ServerCodeError{
+	return apperrors.Wrap(apperrors.KindRemote, &ServerCodeError{
 		Method:     req.Method,
 		RequestURI: req.URL.RequestURI(),
 		Code:       code,
 		Message:    message,
-	}
+	})
 }
 
 // HTTPStatusError describes a non-2xx HTTP response.

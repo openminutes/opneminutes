@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	apperrors "openminutes/internal/errors"
 	"openminutes/internal/minutes"
 )
 
@@ -185,6 +186,9 @@ func TestDeleteCommandRequiresConfirmationBeforeClient(t *testing.T) {
 	if err.Error() != "delete requires --yes" {
 		t.Fatalf("Execute() error = %q, want delete requires --yes", err.Error())
 	}
+	if !apperrors.IsKind(err, apperrors.KindConfirmation) {
+		t.Fatalf("Execute() error kind = %q, want confirmation", apperrors.KindOf(err))
+	}
 	if clientCreated {
 		t.Fatal("client created without --yes")
 	}
@@ -230,6 +234,9 @@ func TestDeleteCommandReturnsMissingConfigError(t *testing.T) {
 	}
 	if err.Error() != "config is required" {
 		t.Fatalf("Execute() error = %q, want config is required", err.Error())
+	}
+	if !apperrors.IsKind(err, apperrors.KindConfig) {
+		t.Fatalf("Execute() error kind = %q, want config", apperrors.KindOf(err))
 	}
 }
 

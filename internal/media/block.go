@@ -4,10 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"hash/adler32"
 	"io"
 	"strconv"
+
+	apperrors "openminutes/internal/errors"
 )
 
 const FileHeaderSize = 512
@@ -31,10 +32,10 @@ func ReadHeader(reader io.Reader) (string, error) {
 
 func ComputeBlocks(reader io.ReadSeeker, size int64, blockSize int64) ([]Block, error) {
 	if blockSize <= 0 {
-		return nil, errors.New("prepare response missing block_size")
+		return nil, apperrors.New(apperrors.KindRemote, "prepare response missing block_size")
 	}
 	if err := SeekStart(reader); err != nil {
-		return nil, err
+		return nil, apperrors.Wrap(apperrors.KindFileSystem, err)
 	}
 
 	var blocks []Block
@@ -42,7 +43,7 @@ func ComputeBlocks(reader io.ReadSeeker, size int64, blockSize int64) ([]Block, 
 	for seq := 0; ; seq++ {
 		n, err := io.ReadFull(reader, buffer)
 		if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
-			return nil, err
+			return nil, apperrors.Wrap(apperrors.KindFileSystem, err)
 		}
 		if n == 0 {
 			break
@@ -66,19 +67,19 @@ func ComputeBlocks(reader io.ReadSeeker, size int64, blockSize int64) ([]Block, 
 func ReadBlock(reader io.ReadSeeker, block Block, blockSize int64) ([]byte, error) {
 	offset := int64(block.Seq) * blockSize
 	if _, err := reader.Seek(offset, io.SeekStart); err != nil {
-		return nil, err
+		return nil, apperrors.Wrap(apperrors.KindFileSystem, err)
 	}
 
 	data := make([]byte, block.Size)
 	if _, err := io.ReadFull(reader, data); err != nil {
-		return nil, err
+		return nil, apperrors.Wrap(apperrors.KindFileSystem, err)
 	}
 
 	if got := Hash(data); got != block.Hash {
-		return nil, fmt.Errorf("block %d hash mismatch", block.Seq)
+		return nil, apperrors.Errorf(apperrors.KindValidation, "block %d hash mismatch", block.Seq)
 	}
 	if got := Checksum(data); got != block.Checksum {
-		return nil, fmt.Errorf("block %d checksum mismatch", block.Seq)
+		return nil, apperrors.Errorf(apperrors.KindValidation, "block %d checksum mismatch", block.Seq)
 	}
 
 	return data, nil

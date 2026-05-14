@@ -2,12 +2,12 @@ package minutes
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+
+	apperrors "openminutes/internal/errors"
 
 	"go.uber.org/zap"
 )
@@ -43,7 +43,7 @@ func (c *Client) ListMinutesPage(ctx context.Context, options ListOptions) (*Lis
 			zap.Int64("timestamp", options.Timestamp),
 			zap.String("reason", "missing_list"),
 		)
-		return nil, errors.New("minutes list response missing list")
+		return nil, apperrors.New(apperrors.KindRemote, "minutes list response missing list")
 	}
 
 	nextTimestamp := int64(0)
@@ -62,7 +62,7 @@ func (c *Client) ListMinutesPage(ctx context.Context, options ListOptions) (*Lis
 			zap.Int64("timestamp", options.Timestamp),
 			zap.String("reason", "missing_next_timestamp"),
 		)
-		return nil, errors.New("minutes list response missing next page share_time")
+		return nil, apperrors.New(apperrors.KindRemote, "minutes list response missing next page share_time")
 	}
 
 	return &ListMinutesPageResult{
@@ -116,7 +116,7 @@ func (c *Client) ListMinutes(ctx context.Context, options ListOptions) ([]Minute
 				zap.Int64("next_timestamp", result.NextTimestamp),
 				zap.String("reason", "pagination_not_advanced"),
 			)
-			return nil, fmt.Errorf("minutes list pagination did not advance from timestamp %d", timestamp)
+			return nil, apperrors.Errorf(apperrors.KindRemote, "minutes list pagination did not advance from timestamp %d", timestamp)
 		}
 
 		timestamp = result.NextTimestamp
@@ -127,7 +127,7 @@ func (c *Client) ListMinutes(ctx context.Context, options ListOptions) ([]Minute
 // ExportSubtitle exports subtitle content for a minute.
 func (c *Client) ExportSubtitle(ctx context.Context, objectToken string, options SubtitleOptions) ([]byte, error) {
 	if objectToken == "" {
-		return nil, errors.New("object token is required")
+		return nil, apperrors.New(apperrors.KindValidation, "object token is required")
 	}
 	c.logger.Debug("export subtitle started",
 		zap.String("object_token", objectToken),
@@ -167,7 +167,7 @@ func (c *Client) ExportSubtitle(ctx context.Context, objectToken string, options
 // GetStatus returns a minute status.
 func (c *Client) GetStatus(ctx context.Context, objectToken string) (*MinuteStatus, error) {
 	if objectToken == "" {
-		return nil, errors.New("object token is required")
+		return nil, apperrors.New(apperrors.KindValidation, "object token is required")
 	}
 	c.logger.Debug("get minute status started", zap.String("object_token", objectToken))
 
@@ -215,7 +215,7 @@ func (c *Client) GetDownloadURL(ctx context.Context, objectToken string) (string
 			zap.String("object_token", objectToken),
 			zap.String("reason", "missing_download_url"),
 		)
-		return "", errors.New("status response missing video_info.video_download_url")
+		return "", apperrors.New(apperrors.KindRemote, "status response missing video_info.video_download_url")
 	}
 
 	c.logger.Debug("get download url completed",
@@ -228,7 +228,7 @@ func (c *Client) GetDownloadURL(ctx context.Context, objectToken string) (string
 // DownloadFile streams a minute video into dst.
 func (c *Client) DownloadFile(ctx context.Context, objectToken string, dst io.Writer) error {
 	if dst == nil {
-		return errors.New("destination writer is required")
+		return apperrors.New(apperrors.KindValidation, "destination writer is required")
 	}
 	c.logger.Debug("download file started", zap.String("object_token", objectToken))
 

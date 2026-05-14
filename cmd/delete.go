@@ -1,14 +1,11 @@
-/*
-Copyright © 2026 NAME HERE <EMAIL ADDRESS>
-*/
 package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
+	apperrors "openminutes/internal/errors"
 	"openminutes/internal/logic"
 	"openminutes/internal/minutes"
 
@@ -51,11 +48,11 @@ trash. The command always requires --yes to avoid accidental deletion.`,
 
 func validateDeleteArgs(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
-		return errors.New("at least one token is required")
+		return apperrors.New(apperrors.KindValidation, "at least one token is required")
 	}
 	for _, token := range args {
 		if strings.TrimSpace(token) == "" {
-			return errors.New("object token is required")
+			return apperrors.New(apperrors.KindValidation, "object token is required")
 		}
 	}
 
@@ -72,7 +69,7 @@ func runDeleteCommand(cmd *cobra.Command, args []string) error {
 	}
 	if !yes {
 		logger.Debug("delete command missing confirmation")
-		return errors.New("delete requires --yes")
+		return apperrors.New(apperrors.KindConfirmation, "delete requires --yes")
 	}
 
 	destroy, err := cmd.Flags().GetBool("destroy")
@@ -130,9 +127,9 @@ func (c *deleteOutputClient) DeleteMinute(ctx context.Context, token string, opt
 
 	if c.destroy {
 		_, err := fmt.Fprintf(c.out, "Permanently deleted %s\n", token)
-		return err
+		return apperrors.Wrap(apperrors.KindFileSystem, err)
 	}
 
 	_, err := fmt.Fprintf(c.out, "Moved %s to trash\n", token)
-	return err
+	return apperrors.Wrap(apperrors.KindFileSystem, err)
 }

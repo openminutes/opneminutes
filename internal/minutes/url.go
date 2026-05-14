@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	apperrors "openminutes/internal/errors"
 )
 
 // NormalizeBaseURL validates and normalizes an API base URL.
@@ -42,5 +44,5 @@ func NormalizeBaseURLOrDefault(fieldName, rawURL, defaultURL string) (string, bo
 }
 
 func invalidBaseURLError(fieldName, rawURL string) error {
-	return fmt.Errorf("invalid %s %q: must be an absolute http or https URL with a host", fieldName, rawURL)
+	return apperrors.Wrap(apperrors.KindConfig, fmt.Errorf("invalid %s %q: must be an absolute http or https URL with a host", fieldName, rawURL))
 }

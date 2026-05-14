@@ -2,10 +2,10 @@ package logic
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	"openminutes/internal/config"
+	apperrors "openminutes/internal/errors"
 	"openminutes/internal/media"
 	"openminutes/internal/minutes"
 
@@ -67,7 +67,7 @@ func UploadFile(ctx context.Context, client UploadClient, filePath string, logge
 		return nil, err
 	}
 	if result == nil {
-		return nil, errors.New("upload result is empty")
+		return nil, apperrors.New(apperrors.KindRemote, "upload result is empty")
 	}
 
 	return result, nil

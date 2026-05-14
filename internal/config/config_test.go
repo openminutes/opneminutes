@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	apperrors "openminutes/internal/errors"
+
 	"go.uber.org/zap"
 )
 
@@ -24,6 +26,9 @@ func TestLoadCreatesMissingDefaultConfig(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "cookie is required") {
 		t.Fatalf("Load() error = %v, want cookie required", err)
+	}
+	if !apperrors.IsKind(err, apperrors.KindAuth) {
+		t.Fatalf("Load() error kind = %q, want auth", apperrors.KindOf(err))
 	}
 
 	data, err := os.ReadFile(configPath)
@@ -149,6 +154,9 @@ cookie = "session=file"
 	if err.Error() != "cookie is required" {
 		t.Fatalf("Load() error = %q, want cookie is required", err.Error())
 	}
+	if !apperrors.IsKind(err, apperrors.KindAuth) {
+		t.Fatalf("Load() error kind = %q, want auth", apperrors.KindOf(err))
+	}
 }
 
 func TestLoadRejectsInvalidURLs(t *testing.T) {
@@ -193,6 +201,9 @@ cookie = "session=abc"
 			}
 			if err.Error() != tt.want {
 				t.Fatalf("Load() error = %q, want %q", err.Error(), tt.want)
+			}
+			if !apperrors.IsKind(err, apperrors.KindConfig) {
+				t.Fatalf("Load() error kind = %q, want config", apperrors.KindOf(err))
 			}
 		})
 	}

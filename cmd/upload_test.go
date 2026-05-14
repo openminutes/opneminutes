@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	apperrors "openminutes/internal/errors"
 	"openminutes/internal/minutes"
 
 	"github.com/spf13/cobra"
@@ -163,6 +164,9 @@ func TestUploadCommandReturnsMissingConfigError(t *testing.T) {
 	}
 	if err.Error() != "config is required" {
 		t.Fatalf("Execute() error = %q, want config is required", err.Error())
+	}
+	if !apperrors.IsKind(err, apperrors.KindConfig) {
+		t.Fatalf("Execute() error kind = %q, want config", apperrors.KindOf(err))
 	}
 }
 

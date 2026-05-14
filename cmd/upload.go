@@ -1,14 +1,11 @@
-/*
-Copyright © 2026 NAME HERE <EMAIL ADDRESS>
-*/
 package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
+	apperrors "openminutes/internal/errors"
 	"openminutes/internal/logic"
 	"openminutes/internal/minutes"
 
@@ -45,13 +42,13 @@ Minute URL/token in the current account.`,
 
 func validateUploadArgs(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
-		return errors.New("file path is required")
+		return apperrors.New(apperrors.KindValidation, "file path is required")
 	}
 	if len(args) > 1 {
-		return errors.New("upload accepts exactly one file path")
+		return apperrors.New(apperrors.KindValidation, "upload accepts exactly one file path")
 	}
 	if strings.TrimSpace(args[0]) == "" {
-		return errors.New("file path is required")
+		return apperrors.New(apperrors.KindValidation, "file path is required")
 	}
 
 	return nil
@@ -87,7 +84,7 @@ func runUploadCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Uploaded %s %s\n", result.ObjectToken, logic.MinuteURL(runtime.Config.BaseURL, result.ObjectToken)); err != nil {
-		return err
+		return apperrors.Wrap(apperrors.KindFileSystem, err)
 	}
 
 	logger.Debug("upload command completed",

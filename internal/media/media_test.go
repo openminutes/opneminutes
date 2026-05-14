@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	apperrors "openminutes/internal/errors"
+
 	"github.com/tcolgate/mp3"
 	"go.uber.org/zap"
 )
@@ -62,6 +64,9 @@ func TestValidateUploadFile(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("ValidateUploadFile() error = %q, want %q", err.Error(), tt.wantErr)
+			}
+			if !apperrors.IsKind(err, apperrors.KindValidation) && !apperrors.IsKind(err, apperrors.KindFileSystem) {
+				t.Fatalf("ValidateUploadFile() error kind = %q, want validation or file system", apperrors.KindOf(err))
 			}
 		})
 	}

@@ -1,9 +1,8 @@
 package cmd
 
 import (
-	"errors"
-
 	"openminutes/internal/config"
+	apperrors "openminutes/internal/errors"
 	"openminutes/internal/minutes"
 
 	"github.com/spf13/cobra"
@@ -20,7 +19,7 @@ func runtimeFromCommand(cmd *cobra.Command) (commandRuntime, error) {
 	logger := loggerFromCommand(cmd)
 	config, ok := configFromCommand(cmd)
 	if !ok {
-		return commandRuntime{Logger: logger}, errors.New("config is required")
+		return commandRuntime{Logger: logger}, apperrors.New(apperrors.KindConfig, "config is required")
 	}
 
 	clientConfig := minutes.Config{

@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	apperrors "openminutes/internal/errors"
+
 	mp4 "github.com/Eyevinn/mp4ff/mp4"
 	"github.com/go-audio/wav"
 	"github.com/jfreymuth/oggvorbis"
@@ -34,7 +36,7 @@ func ProbeUploadDuration(filePath, extension string) (time.Duration, bool, error
 func ProbeUploadDurationFile(filePath string, probe func(*os.File) (time.Duration, error)) (time.Duration, bool, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return 0, false, err
+		return 0, false, apperrors.Wrap(apperrors.KindFileSystem, err)
 	}
 	defer file.Close()
 

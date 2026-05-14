@@ -1,15 +1,12 @@
-/*
-Copyright © 2026 NAME HERE <EMAIL ADDRESS>
-*/
 package cmd
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
+	apperrors "openminutes/internal/errors"
 	"openminutes/internal/logic"
 	"openminutes/internal/minutes"
 
@@ -72,14 +69,14 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if size <= 0 {
-		return errors.New("size must be greater than 0")
+		return apperrors.New(apperrors.KindValidation, "size must be greater than 0")
 	}
 	timestamp, err := cmd.Flags().GetInt64("timestamp")
 	if err != nil {
 		return err
 	}
 	if timestamp < 0 {
-		return errors.New("timestamp must be greater than or equal to 0")
+		return apperrors.New(apperrors.KindValidation, "timestamp must be greater than or equal to 0")
 	}
 	all, err := cmd.Flags().GetBool("all")
 	if err != nil {
@@ -127,23 +124,23 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 
 	out := cmd.OutOrStdout()
 	if _, err := fmt.Fprintln(out, "Columns: token name URL"); err != nil {
-		return err
+		return apperrors.Wrap(apperrors.KindFileSystem, err)
 	}
 	for _, item := range items {
 		if _, err := fmt.Fprintf(out, "%s %s %s\n", item.ObjectToken, logic.MinuteTopic(item.Topic), listURL(item, runtime.Config.BaseURL)); err != nil {
-			return err
+			return apperrors.Wrap(apperrors.KindFileSystem, err)
 		}
 	}
 	if _, err := fmt.Fprintln(out); err != nil {
-		return err
+		return apperrors.Wrap(apperrors.KindFileSystem, err)
 	}
 	if result.HasMore {
 		if _, err := fmt.Fprintf(out, "Next page: openminutes list --size %d --timestamp %d\n", size, result.NextTimestamp); err != nil {
-			return err
+			return apperrors.Wrap(apperrors.KindFileSystem, err)
 		}
 	}
 	if _, err := fmt.Fprintln(out, "Get content: openminutes get <token>"); err != nil {
-		return err
+		return apperrors.Wrap(apperrors.KindFileSystem, err)
 	}
 
 	logger.Debug("list command completed",
@@ -174,7 +171,7 @@ func writeListJSON(cmd *cobra.Command, result *minutes.ListMinutesPageResult) er
 	encoder := json.NewEncoder(cmd.OutOrStdout())
 	encoder.SetIndent("", "  ")
 
-	return encoder.Encode(output)
+	return apperrors.Wrap(apperrors.KindFileSystem, encoder.Encode(output))
 }
 
 func listURL(item minutes.Minute, baseURL string) string {

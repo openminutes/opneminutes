@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	apperrors "openminutes/internal/errors"
+
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -146,6 +148,9 @@ func TestClientReturnsHTTPStatusError(t *testing.T) {
 	if !errors.As(err, &statusErr) {
 		t.Fatalf("error type = %T, want *HTTPStatusError", err)
 	}
+	if !apperrors.IsKind(err, apperrors.KindRemote) {
+		t.Fatalf("error kind = %q, want remote", apperrors.KindOf(err))
+	}
 	if statusErr.Method != http.MethodGet || !strings.HasPrefix(statusErr.RequestURI, "/minutes/api/space/list") || statusErr.StatusCode != http.StatusTeapot {
 		t.Fatalf("HTTPStatusError = %#v, want request and status details", statusErr)
 	}
@@ -172,6 +177,9 @@ func TestClientReturnsServerCodeError(t *testing.T) {
 	var serverErr *ServerCodeError
 	if !errors.As(err, &serverErr) {
 		t.Fatalf("error type = %T, want *ServerCodeError", err)
+	}
+	if !apperrors.IsKind(err, apperrors.KindRemote) {
+		t.Fatalf("error kind = %q, want remote", apperrors.KindOf(err))
 	}
 	if serverErr.Method != http.MethodGet || !strings.HasPrefix(serverErr.RequestURI, "/minutes/api/space/list") || serverErr.Code != 123 || serverErr.Message != "expired" {
 		t.Fatalf("ServerCodeError = %#v, want request and server details", serverErr)

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	apperrors "openminutes/internal/errors"
 	"openminutes/internal/minutes"
 
 	"github.com/spf13/cobra"
@@ -468,6 +469,9 @@ func TestGetCommandRejectsInvalidFileTypeBeforeClientCreation(t *testing.T) {
 	if err.Error() != `unsupported file_type "pdf": must be txt or srt` {
 		t.Fatalf("Execute() error = %q, want unsupported file_type", err.Error())
 	}
+	if !apperrors.IsKind(err, apperrors.KindValidation) {
+		t.Fatalf("Execute() error kind = %q, want validation", apperrors.KindOf(err))
+	}
 	if clientCreated {
 		t.Fatal("client created for invalid file_type")
 	}
@@ -822,6 +826,9 @@ func TestEnsureGetOutputDoesNotExistReturnsStatError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "stat output file") {
 		t.Fatalf("ensureGetOutputDoesNotExist() error = %q, want stat error", err.Error())
+	}
+	if !apperrors.IsKind(err, apperrors.KindFileSystem) {
+		t.Fatalf("ensureGetOutputDoesNotExist() error kind = %q, want file system", apperrors.KindOf(err))
 	}
 }
 

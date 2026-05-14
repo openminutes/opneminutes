@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"openminutes/internal/config"
+	apperrors "openminutes/internal/errors"
 	"openminutes/internal/media"
 	"openminutes/internal/minutes"
 
@@ -223,6 +224,9 @@ func TestUploadFileReturnsUploadErrorAndRejectsNilResult(t *testing.T) {
 		}
 		if err.Error() != "upload result is empty" {
 			t.Fatalf("UploadFile() error = %q, want upload result is empty", err.Error())
+		}
+		if !apperrors.IsKind(err, apperrors.KindRemote) {
+			t.Fatalf("UploadFile() error kind = %q, want remote", apperrors.KindOf(err))
 		}
 	})
 }
