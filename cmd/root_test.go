@@ -193,7 +193,13 @@ func TestRootCommandSubcommands(t *testing.T) {
 			return &minutes.UploadResult{ObjectToken: "object-root"}, nil
 		}), nil
 	})
+	withGetMinutesClient(t, func(config minutes.Config) (getMinutesClient, error) {
+		return getMinutesClientFunc(func(ctx context.Context, objectToken string, options minutes.SubtitleOptions) ([]byte, error) {
+			return []byte("root subtitle\n"), nil
+		}), nil
+	})
 	uploadPath := writeUploadFile(t, t.TempDir(), "root.aac", []byte("audio"))
+	getOutputPath := filepath.Join(t.TempDir(), "root.txt")
 
 	tests := []struct {
 		name string
@@ -207,8 +213,8 @@ func TestRootCommandSubcommands(t *testing.T) {
 		},
 		{
 			name: "get",
-			args: []string{"get"},
-			want: "get called\n",
+			args: []string{"get", "token-root", "--output", getOutputPath},
+			want: "Saved token-root to " + getOutputPath + "\n",
 		},
 		{
 			name: "list",
@@ -470,11 +476,7 @@ func TestExecute(t *testing.T) {
 
 	oldArgs := os.Args
 	oldExit := exit
-	configPath := writeConfig(t, `base_url = "https://meetings.example.test"
-space_base_url = "https://space.example.test"
-cookie = "session=abc"
-`)
-	os.Args = []string{"openminutes", "--config", configPath, "get"}
+	os.Args = []string{"openminutes", "--version"}
 	exit = func(code int) {
 		t.Fatalf("exit called with code %d", code)
 	}
@@ -490,11 +492,7 @@ func TestExecuteCommand(t *testing.T) {
 	withoutOpenMinutesEnv(t)
 
 	cmd := newRootCommand()
-	configPath := writeConfig(t, `base_url = "https://meetings.example.test"
-space_base_url = "https://space.example.test"
-cookie = "session=abc"
-`)
-	cmd.SetArgs([]string{"--config", configPath, "get"})
+	cmd.SetArgs([]string{"--version"})
 	cmd.SetOut(new(bytes.Buffer))
 	cmd.SetErr(new(bytes.Buffer))
 

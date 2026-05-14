@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -14,12 +13,7 @@ func TestMainCommand(t *testing.T) {
 		os.Args = oldArgs
 	})
 
-	configPath := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(configPath, []byte("base_url = \"https://meetings.example.test\"\nspace_base_url = \"https://space.example.test\"\ncookie = \"session=abc\"\n"), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	os.Args = []string{"openminutes", "--config", configPath, "get"}
+	os.Args = []string{"openminutes", "--version"}
 	main()
 }
 
