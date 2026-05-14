@@ -2,27 +2,41 @@ import { defineConfig } from 'vitepress'
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
-  title: "Open Minutes",
-  description: "Open Minutes - a cli tool for options",
+  title: 'OpenMinutes',
+  description: 'A Go CLI for Feishu/Lark Minutes',
   themeConfig: {
-    // https://vitepress.dev/reference/default-theme-config
     nav: [
       { text: 'Home', link: '/' },
-      { text: 'Examples', link: '/markdown-examples' }
+      { text: 'Quick Start', link: '/quick-start' },
+      { text: 'CLI', link: '/cli/openminutes' }
     ],
 
     sidebar: [
       {
-        text: 'Examples',
+        text: 'Getting Started',
         items: [
-          { text: 'Markdown Examples', link: '/markdown-examples' },
-          { text: 'Runtime API Examples', link: '/api-examples' }
+          { text: 'Quick Start', link: '/quick-start' }
+        ]
+      },
+      {
+        text: 'CLI Guides',
+        items: [
+          { text: 'openminutes', link: '/cli/openminutes' },
+          { text: 'openminutes list', link: '/cli/list' },
+          { text: 'openminutes get', link: '/cli/get' },
+          { text: 'openminutes upload', link: '/cli/upload' },
+          { text: 'openminutes delete', link: '/cli/delete' },
+          { text: 'openminutes completion', link: '/cli/completion' },
+          { text: 'openminutes completion bash', link: '/cli/completion-bash' },
+          { text: 'openminutes completion zsh', link: '/cli/completion-zsh' },
+          { text: 'openminutes completion fish', link: '/cli/completion-fish' },
+          { text: 'openminutes completion powershell', link: '/cli/completion-powershell' }
         ]
       }
     ],
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/vuejs/vitepress' }
+      { icon: 'github', link: 'https://github.com/openminutes/opneminutes' }
     ]
   }
 })
