@@ -1,7 +1,16 @@
 import { defineConfig } from 'vitepress'
+import llmstxt, { copyOrDownloadAsMarkdownButtons } from 'vitepress-plugin-llms'
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
+  vite: {
+    plugins: [llmstxt()],
+  },
+  markdown: {
+    config(md) {
+      md.use(copyOrDownloadAsMarkdownButtons)
+    },
+  },
   title: 'OpenMinutes',
   description: 'A Go CLI for Feishu/Lark Minutes',
   themeConfig: {

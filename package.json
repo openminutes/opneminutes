@@ -15,6 +15,7 @@
   },
   "homepage": "https://github.com/openminutes/openminutes#readme",
   "devDependencies": {
-    "vitepress": "^2.0.0-alpha.17"
+    "vitepress": "^2.0.0-alpha.17",
+    "vitepress-plugin-llms": "^1.12.2"
   }
 }
