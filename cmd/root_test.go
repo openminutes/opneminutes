@@ -204,7 +204,6 @@ func TestRootCommandSubcommands(t *testing.T) {
 		}), nil
 	})
 	uploadPath := writeUploadFile(t, t.TempDir(), "root.aac", []byte("audio"))
-	getOutputPath := filepath.Join(t.TempDir(), "root.txt")
 
 	tests := []struct {
 		name string
@@ -218,8 +217,8 @@ func TestRootCommandSubcommands(t *testing.T) {
 		},
 		{
 			name: "get",
-			args: []string{"get", "token-root", "--output", getOutputPath},
-			want: "Saved token-root to " + getOutputPath + "\n",
+			args: []string{"get", "token-root"},
+			want: "root subtitle\n",
 		},
 		{
 			name: "list",

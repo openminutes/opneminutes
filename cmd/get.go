@@ -46,17 +46,17 @@ func newGetCommand() *cobra.Command {
 		Long: `Export text from a Minute.
 
 Export one Minute as txt or srt. Speaker names and timestamps can be included
-with flags. The default output path is TOKEN.txt for the default txt format;
-srt output uses TOKEN.srt unless --output is set. Output files are created
-exclusively and existing files are never overwritten.`,
+with flags. Exported content is printed to stdout by default. Use --output or
+-O to write to a file instead. Output files are created exclusively and existing
+files are never overwritten.`,
 		Example: `  openminutes get m_abc123
-  openminutes get m_abc123 --file_type srt --speaker --timestamp --output meeting.srt`,
+  openminutes get m_abc123 --file_type srt --speaker --timestamp -O meeting.srt`,
 		RunE: runGetCommand,
 	}
 	cmd.Flags().String("file_type", "txt", "export format: txt or srt")
 	cmd.Flags().Bool("speaker", false, "include speaker names in the exported text")
 	cmd.Flags().Bool("timestamp", false, "include timestamps in the exported text")
-	cmd.Flags().String("output", "", "output file path")
+	cmd.Flags().StringP("output", "O", "", "write exported content to this file path")
 
 	return cmd
 }
@@ -99,8 +99,10 @@ func runGetCommand(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureGetOutputDoesNotExist(outputPath); err != nil {
-		return err
+	if outputPath != "" {
+		if err := ensureGetOutputDoesNotExist(outputPath); err != nil {
+			return err
+		}
 	}
 
 	speaker, err := cmd.Flags().GetBool("speaker")
@@ -146,6 +148,24 @@ func runGetCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if outputPath == "" {
+		if err := writeGetStdout(cmd.OutOrStdout(), data); err != nil {
+			logger.Debug("write subtitle stdout failed",
+				zap.String("object_token", token),
+				zap.Error(err),
+			)
+			return err
+		}
+
+		logger.Debug("get command completed",
+			zap.String("object_token", token),
+			zap.String("output", "stdout"),
+			zap.String("file_type", fileType),
+			zap.Int("bytes", len(data)),
+		)
+		return nil
+	}
+
 	if err := writeGetOutputFile(outputPath, data); err != nil {
 		logger.Debug("write subtitle output failed",
 			zap.String("path", outputPath),
@@ -167,7 +187,7 @@ func runGetCommand(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func getOutputPath(cmd *cobra.Command, token, fileType string) (string, error) {
+func getOutputPath(cmd *cobra.Command, _ string, _ string) (string, error) {
 	outputPath, err := cmd.Flags().GetString("output")
 	if err != nil {
 		return "", err
@@ -181,7 +201,31 @@ func getOutputPath(cmd *cobra.Command, token, fileType string) (string, error) {
 		return outputPath, nil
 	}
 
-	return token + "." + fileType, nil
+	return "", nil
+}
+
+func writeGetStdout(stdout io.Writer, data []byte) error {
+	n, err := stdout.Write(data)
+	if err != nil {
+		return err
+	}
+	if n != len(data) {
+		return io.ErrShortWrite
+	}
+
+	if len(data) > 0 && data[len(data)-1] == '\n' {
+		return nil
+	}
+
+	n, err = stdout.Write([]byte("\n"))
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return io.ErrShortWrite
+	}
+
+	return nil
 }
 
 func ensureGetOutputDoesNotExist(outputPath string) error {

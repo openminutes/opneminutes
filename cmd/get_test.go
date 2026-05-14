@@ -66,7 +66,7 @@ func TestNewGetMinutesClientInitializesRealClient(t *testing.T) {
 	}
 }
 
-func TestGetCommandDefaultExportWritesTextFile(t *testing.T) {
+func TestGetCommandDefaultExportWritesStdout(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Chdir(tempDir)
 
@@ -91,16 +91,41 @@ func TestGetCommandDefaultExportWritesTextFile(t *testing.T) {
 	if !reflect.DeepEqual(gotOptions, minutes.SubtitleOptions{Format: "txt"}) {
 		t.Fatalf("ExportSubtitle() options = %#v, want default txt options", gotOptions)
 	}
-	if stdout != "Saved token-1 to token-1.txt\n" {
-		t.Fatalf("stdout = %q, want saved message", stdout)
+	if stdout != "hello\nworld\n" {
+		t.Fatalf("stdout = %q, want exported text", stdout)
 	}
 
-	data, err := os.ReadFile(filepath.Join(tempDir, "token-1.txt"))
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v, want nil", err)
+	if _, err := os.Stat(filepath.Join(tempDir, "token-1.txt")); !os.IsNotExist(err) {
+		t.Fatalf("implicit output file stat error = %v, want not exist", err)
 	}
-	if string(data) != "hello\nworld\n" {
-		t.Fatalf("output file = %q, want exported bytes", data)
+}
+
+func TestGetCommandDefaultStdoutAddsTrailingNewlineWhenMissing(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{name: "missing newline", data: []byte("subtitle"), want: "subtitle\n"},
+		{name: "already has newline", data: []byte("subtitle\n"), want: "subtitle\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withGetMinutesClient(t, func(config minutes.Config) (getMinutesClient, error) {
+				return getMinutesClientFunc(func(ctx context.Context, objectToken string, options minutes.SubtitleOptions) ([]byte, error) {
+					return tt.data, nil
+				}), nil
+			})
+
+			stdout, err := executeGetCommand(t, testCommandConfig(), "token-1")
+			if err != nil {
+				t.Fatalf("Execute() error = %v, want nil", err)
+			}
+			if stdout != tt.want {
+				t.Fatalf("stdout = %q, want %q", stdout, tt.want)
+			}
+		})
 	}
 }
 
@@ -138,6 +163,31 @@ func TestGetCommandPassesCustomSubtitleOptions(t *testing.T) {
 		t.Fatalf("ReadFile() error = %v, want nil", err)
 	}
 	if string(data) != "1\n00:00:00,000 --> 00:00:01,000\nHi\n" {
+		t.Fatalf("output file = %q, want exported bytes", data)
+	}
+}
+
+func TestGetCommandOutputShorthandWritesTextFile(t *testing.T) {
+	outputPath := filepath.Join(t.TempDir(), "subtitle.txt")
+	withGetMinutesClient(t, func(config minutes.Config) (getMinutesClient, error) {
+		return getMinutesClientFunc(func(ctx context.Context, objectToken string, options minutes.SubtitleOptions) ([]byte, error) {
+			return []byte("shorthand subtitle\n"), nil
+		}), nil
+	})
+
+	stdout, err := executeGetCommand(t, testCommandConfig(), "token-1", "-O", outputPath)
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+	if stdout != "Saved token-1 to "+outputPath+"\n" {
+		t.Fatalf("stdout = %q, want saved message", stdout)
+	}
+
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v, want nil", err)
+	}
+	if string(data) != "shorthand subtitle\n" {
 		t.Fatalf("output file = %q, want exported bytes", data)
 	}
 }
@@ -451,7 +501,26 @@ func TestRunGetCommandReturnsFlagErrors(t *testing.T) {
 	}
 }
 
-func TestGetCommandReturnsStdoutError(t *testing.T) {
+func TestGetCommandReturnsDefaultStdoutError(t *testing.T) {
+	wantErr := errors.New("stdout failed")
+	withGetMinutesClient(t, func(config minutes.Config) (getMinutesClient, error) {
+		return getMinutesClientFunc(func(ctx context.Context, objectToken string, options minutes.SubtitleOptions) ([]byte, error) {
+			return []byte("subtitle"), nil
+		}), nil
+	})
+
+	cmd := newGetCommand()
+	cmd.SetOut(errorWriter{err: wantErr})
+	cmd.SetArgs([]string{"token-1"})
+	cmd.SetContext(contextWithConfig(context.Background(), testCommandConfig()))
+
+	err := cmd.Execute()
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Execute() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestGetCommandReturnsSaveMessageStdoutError(t *testing.T) {
 	wantErr := errors.New("stdout failed")
 	outputPath := filepath.Join(t.TempDir(), "out.txt")
 	withGetMinutesClient(t, func(config minutes.Config) (getMinutesClient, error) {
@@ -478,6 +547,59 @@ func TestGetOutputPathReturnsMissingFlagError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "output") {
 		t.Fatalf("getOutputPath() error = %q, want output flag error", err.Error())
+	}
+}
+
+func TestGetOutputPathReturnsEmptyWhenOutputNotExplicit(t *testing.T) {
+	outputPath, err := getOutputPath(newGetCommand(), "token-1", "txt")
+	if err != nil {
+		t.Fatalf("getOutputPath() error = %v, want nil", err)
+	}
+	if outputPath != "" {
+		t.Fatalf("getOutputPath() = %q, want empty", outputPath)
+	}
+}
+
+func TestWriteGetStdoutReturnsWriteErrors(t *testing.T) {
+	writeErr := errors.New("write failed")
+
+	tests := []struct {
+		name    string
+		writer  *scriptedWriter
+		wantErr error
+	}{
+		{
+			name: "short data write",
+			writer: &scriptedWriter{writes: []scriptedWrite{
+				{n: 1},
+			}},
+			wantErr: io.ErrShortWrite,
+		},
+		{
+			name: "newline write error",
+			writer: &scriptedWriter{writes: []scriptedWrite{
+				{full: true},
+				{err: writeErr},
+			}},
+			wantErr: writeErr,
+		},
+		{
+			name: "short newline write",
+			writer: &scriptedWriter{writes: []scriptedWrite{
+				{full: true},
+				{n: 0},
+			}},
+			wantErr: io.ErrShortWrite,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := writeGetStdout(tt.writer, []byte("subtitle"))
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("writeGetStdout() error = %v, want %v", err, tt.wantErr)
+			}
+		})
 	}
 }
 
@@ -537,6 +659,30 @@ type errorWriter struct {
 
 func (w errorWriter) Write([]byte) (int, error) {
 	return 0, w.err
+}
+
+type scriptedWrite struct {
+	n    int
+	full bool
+	err  error
+}
+
+type scriptedWriter struct {
+	writes []scriptedWrite
+	calls  int
+}
+
+func (w *scriptedWriter) Write(p []byte) (int, error) {
+	if w.calls >= len(w.writes) {
+		return len(p), nil
+	}
+
+	result := w.writes[w.calls]
+	w.calls++
+	if result.full {
+		return len(p), result.err
+	}
+	return result.n, result.err
 }
 
 type fakeGetOutputFile struct {
