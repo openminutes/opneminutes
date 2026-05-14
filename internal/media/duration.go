@@ -1,4 +1,4 @@
-package logic
+package media
 
 import (
 	"errors"
@@ -14,24 +14,24 @@ import (
 
 const maxTimeDuration = time.Duration(1<<63 - 1)
 
-var errUploadDurationUnknown = errors.New("upload duration is unknown")
+var ErrUploadDurationUnknown = errors.New("upload duration is unknown")
 
-func probeUploadDuration(filePath, extension string) (time.Duration, bool, error) {
+func ProbeUploadDuration(filePath, extension string) (time.Duration, bool, error) {
 	switch extension {
 	case ".mp4", ".m4v", ".m4a", ".mov":
-		return probeUploadDurationFile(filePath, probeMP4Duration)
+		return ProbeUploadDurationFile(filePath, ProbeMP4Duration)
 	case ".wav":
-		return probeUploadDurationFile(filePath, probeWAVDuration)
+		return ProbeUploadDurationFile(filePath, ProbeWAVDuration)
 	case ".mp3":
-		return probeUploadDurationFile(filePath, probeMP3Duration)
+		return ProbeUploadDurationFile(filePath, ProbeMP3Duration)
 	case ".ogg":
-		return probeUploadDurationFile(filePath, probeOggVorbisDuration)
+		return ProbeUploadDurationFile(filePath, ProbeOggVorbisDuration)
 	default:
 		return 0, false, nil
 	}
 }
 
-func probeUploadDurationFile(filePath string, probe func(*os.File) (time.Duration, error)) (time.Duration, bool, error) {
+func ProbeUploadDurationFile(filePath string, probe func(*os.File) (time.Duration, error)) (time.Duration, bool, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return 0, false, err
@@ -43,13 +43,13 @@ func probeUploadDurationFile(filePath string, probe func(*os.File) (time.Duratio
 		return 0, false, err
 	}
 	if duration <= 0 {
-		return 0, false, errUploadDurationUnknown
+		return 0, false, ErrUploadDurationUnknown
 	}
 
 	return duration, true, nil
 }
 
-func probeMP4Duration(file *os.File) (time.Duration, error) {
+func ProbeMP4Duration(file *os.File) (time.Duration, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return 0, err
 	}
@@ -60,13 +60,13 @@ func probeMP4Duration(file *os.File) (time.Duration, error) {
 	}
 
 	if parsed.Moov == nil || parsed.Moov.Mvhd == nil || parsed.Moov.Mvhd.Timescale == 0 || parsed.Moov.Mvhd.Duration == 0 {
-		return 0, errUploadDurationUnknown
+		return 0, ErrUploadDurationUnknown
 	}
 
-	return durationFromTimeUnits(parsed.Moov.Mvhd.Duration, uint64(parsed.Moov.Mvhd.Timescale)), nil
+	return DurationFromTimeUnits(parsed.Moov.Mvhd.Duration, uint64(parsed.Moov.Mvhd.Timescale)), nil
 }
 
-func probeWAVDuration(file *os.File) (time.Duration, error) {
+func ProbeWAVDuration(file *os.File) (time.Duration, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return 0, err
 	}
@@ -76,13 +76,13 @@ func probeWAVDuration(file *os.File) (time.Duration, error) {
 		return 0, err
 	}
 	if decoder.NumChans < 1 || decoder.BitDepth < 8 || decoder.AvgBytesPerSec == 0 || decoder.PCMSize <= 0 {
-		return 0, errUploadDurationUnknown
+		return 0, ErrUploadDurationUnknown
 	}
 
-	return durationFromTimeUnits(uint64(decoder.PCMSize), uint64(decoder.AvgBytesPerSec)), nil
+	return DurationFromTimeUnits(uint64(decoder.PCMSize), uint64(decoder.AvgBytesPerSec)), nil
 }
 
-func probeMP3Duration(file *os.File) (time.Duration, error) {
+func ProbeMP3Duration(file *os.File) (time.Duration, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return 0, err
 	}
@@ -100,13 +100,13 @@ func probeMP3Duration(file *os.File) (time.Duration, error) {
 		}
 
 		duration += frame.Duration()
-		if duration > maxUploadDuration {
+		if duration > MaxUploadDuration {
 			return duration, nil
 		}
 	}
 }
 
-func probeOggVorbisDuration(file *os.File) (time.Duration, error) {
+func ProbeOggVorbisDuration(file *os.File) (time.Duration, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return 0, err
 	}
@@ -116,13 +116,13 @@ func probeOggVorbisDuration(file *os.File) (time.Duration, error) {
 		return 0, err
 	}
 	if format == nil || format.SampleRate <= 0 || samples <= 0 {
-		return 0, errUploadDurationUnknown
+		return 0, ErrUploadDurationUnknown
 	}
 
-	return durationFromTimeUnits(uint64(samples), uint64(format.SampleRate)), nil
+	return DurationFromTimeUnits(uint64(samples), uint64(format.SampleRate)), nil
 }
 
-func durationFromTimeUnits(units, unitsPerSecond uint64) time.Duration {
+func DurationFromTimeUnits(units, unitsPerSecond uint64) time.Duration {
 	if units == 0 || unitsPerSecond == 0 {
 		return 0
 	}

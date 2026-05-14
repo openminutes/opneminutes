@@ -3,24 +3,19 @@ package minutes
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/adler32"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
+	"openminutes/internal/media"
+
 	"go.uber.org/zap"
 )
-
-const fileHeaderSize = 512
 
 var jsonMarshal = json.Marshal
 
@@ -30,7 +25,7 @@ func (c *Client) UploadFile(ctx context.Context, options UploadOptions) (*Upload
 	if err != nil {
 		return nil, err
 	}
-	if closer, ok := upload.reader.(io.Closer); ok {
+	if closer, ok := upload.Reader.(io.Closer); ok {
 		defer closer.Close()
 	}
 
@@ -60,7 +55,7 @@ func (c *Client) UploadFile(ctx context.Context, options UploadOptions) (*Upload
 
 	result := session.result()
 	c.logger.Debug("upload file completed",
-		zap.String("name", upload.name),
+		zap.String("name", upload.Name),
 		zap.String("object_token", result.ObjectToken),
 		zap.String("upload_id", result.UploadID),
 		zap.String("vhid", result.VHID),
@@ -70,41 +65,46 @@ func (c *Client) UploadFile(ctx context.Context, options UploadOptions) (*Upload
 	return result, nil
 }
 
-func (c *Client) openUploadSource(options UploadOptions) (*uploadSource, error) {
-	upload, err := newUploadSource(options)
+func (c *Client) openUploadSource(options UploadOptions) (*media.Source, error) {
+	upload, err := media.OpenSource(media.SourceOptions{
+		FilePath: options.FilePath,
+		Reader:   options.Reader,
+		Size:     options.Size,
+		Name:     options.Name,
+	})
 	if err != nil {
 		c.logger.Debug("upload file source failed", zap.Error(err))
 		return nil, err
 	}
 
 	c.logger.Debug("upload file started",
-		zap.String("name", upload.name),
-		zap.Int64("size", upload.size),
+		zap.String("name", upload.Name),
+		zap.Int64("size", upload.Size),
 	)
 	return upload, nil
 }
 
-func (c *Client) prepareUploadSource(upload *uploadSource) (string, error) {
-	if err := seekStart(upload.reader); err != nil {
+func (c *Client) prepareUploadSource(upload *media.Source) (string, error) {
+	if err := media.SeekStart(upload.Reader); err != nil {
 		c.logger.Debug("upload file seek failed",
-			zap.String("name", upload.name),
+			zap.String("name", upload.Name),
 			zap.Error(err),
 		)
 		return "", err
 	}
 
-	fileHeader, err := readFileHeader(upload.reader)
+	fileHeader, err := media.ReadHeader(upload.Reader)
 	if err != nil {
 		c.logger.Debug("upload file header read failed",
-			zap.String("name", upload.name),
+			zap.String("name", upload.Name),
 			zap.Error(err),
 		)
 		return "", err
 	}
 
-	if err := seekStart(upload.reader); err != nil {
+	if err := media.SeekStart(upload.Reader); err != nil {
 		c.logger.Debug("upload file seek failed",
-			zap.String("name", upload.name),
+			zap.String("name", upload.Name),
 			zap.Error(err),
 		)
 		return "", err
@@ -113,25 +113,25 @@ func (c *Client) prepareUploadSource(upload *uploadSource) (string, error) {
 	return fileHeader, nil
 }
 
-func (c *Client) prepareUploadSession(ctx context.Context, upload *uploadSource, fileHeader string, options UploadOptions, language string) (*uploadSession, error) {
+func (c *Client) prepareUploadSession(ctx context.Context, upload *media.Source, fileHeader string, options UploadOptions, language string) (*uploadSession, error) {
 	fileID := strings.TrimSpace(options.FileID)
 	fileIDDefaulted := fileID == ""
 	if fileID == "" {
 		fileID = newFileID()
 	}
-	fileInfo := fmt.Sprintf("%s_%d", fileID, upload.size)
+	fileInfo := fmt.Sprintf("%s_%d", fileID, upload.Size)
 	c.logger.Debug("upload file id prepared",
-		zap.String("name", upload.name),
+		zap.String("name", upload.Name),
 		zap.String("file_id", fileID),
 		zap.Bool("file_id_defaulted", fileIDDefaulted),
-		zap.Int64("size", upload.size),
+		zap.Int64("size", upload.Size),
 	)
 
 	uploadToken, err := c.getUploadToken(ctx, fileInfo, language)
 	if err != nil {
 		c.logger.Debug("upload token request failed",
 			zap.String("file_id", fileID),
-			zap.Int64("size", upload.size),
+			zap.Int64("size", upload.Size),
 			zap.Error(err),
 		)
 		return nil, err
@@ -142,8 +142,8 @@ func (c *Client) prepareUploadSession(ctx context.Context, upload *uploadSource,
 	)
 
 	prepare, err := c.prepareUpload(ctx, prepareUploadRequest{
-		Name:        upload.name,
-		FileSize:    upload.size,
+		Name:        upload.Name,
+		FileSize:    upload.Size,
 		FileHeader:  fileHeader,
 		DriveUpload: true,
 		UploadToken: uploadToken,
@@ -151,7 +151,7 @@ func (c *Client) prepareUploadSession(ctx context.Context, upload *uploadSource,
 	})
 	if err != nil {
 		c.logger.Debug("upload prepare failed",
-			zap.String("name", upload.name),
+			zap.String("name", upload.Name),
 			zap.String("file_id", fileID),
 			zap.Error(err),
 		)
@@ -159,7 +159,7 @@ func (c *Client) prepareUploadSession(ctx context.Context, upload *uploadSource,
 	}
 	if err := prepare.validate(); err != nil {
 		c.logger.Debug("upload prepare response invalid",
-			zap.String("name", upload.name),
+			zap.String("name", upload.Name),
 			zap.String("upload_id", prepare.UploadID),
 			zap.String("object_token", prepare.ObjectToken),
 			zap.String("vhid", prepare.VHID),
@@ -170,7 +170,7 @@ func (c *Client) prepareUploadSession(ctx context.Context, upload *uploadSource,
 		return nil, err
 	}
 	c.logger.Debug("upload prepared",
-		zap.String("name", upload.name),
+		zap.String("name", upload.Name),
 		zap.String("upload_id", prepare.UploadID),
 		zap.String("object_token", prepare.ObjectToken),
 		zap.String("vhid", prepare.VHID),
@@ -184,8 +184,8 @@ func (c *Client) prepareUploadSession(ctx context.Context, upload *uploadSource,
 	}, nil
 }
 
-func (c *Client) planUploadBlocks(upload *uploadSource, session *uploadSession) ([]uploadBlock, error) {
-	blocks, err := computeBlocks(upload.reader, upload.size, session.prepare.BlockSize)
+func (c *Client) planUploadBlocks(upload *media.Source, session *uploadSession) ([]media.Block, error) {
+	blocks, err := media.ComputeBlocks(upload.Reader, upload.Size, session.prepare.BlockSize)
 	if err != nil {
 		c.logger.Debug("upload block computation failed",
 			zap.String("upload_id", session.prepare.UploadID),
@@ -211,7 +211,7 @@ func (c *Client) planUploadBlocks(upload *uploadSource, session *uploadSession) 
 	return blocks, nil
 }
 
-func (c *Client) transferUploadBlocks(ctx context.Context, upload *uploadSource, session *uploadSession, blocks []uploadBlock, language string) error {
+func (c *Client) transferUploadBlocks(ctx context.Context, upload *media.Source, session *uploadSession, blocks []media.Block, language string) error {
 	neededBlocks, err := c.getNeededUploadBlocks(ctx, session.prepare.UploadID, blocks, language)
 	if err != nil {
 		c.logger.Debug("upload needed blocks request failed",
@@ -225,7 +225,7 @@ func (c *Client) transferUploadBlocks(ctx context.Context, upload *uploadSource,
 		zap.Int("needed_blocks", len(neededBlocks)),
 	)
 
-	if err := uploadNeededBlocks(ctx, c, upload.reader, session.prepare.UploadID, session.prepare.BlockSize, neededBlocks); err != nil {
+	if err := uploadNeededBlocks(ctx, c, upload.Reader, session.prepare.UploadID, session.prepare.BlockSize, neededBlocks); err != nil {
 		c.logger.Debug("upload needed blocks failed",
 			zap.String("upload_id", session.prepare.UploadID),
 			zap.Error(err),
@@ -370,7 +370,7 @@ func (c *Client) prepareUpload(ctx context.Context, payload prepareUploadRequest
 	return &data, nil
 }
 
-func (c *Client) getNeededUploadBlocks(ctx context.Context, uploadID string, blocks []uploadBlock, language string) ([]uploadBlock, error) {
+func (c *Client) getNeededUploadBlocks(ctx context.Context, uploadID string, blocks []media.Block, language string) ([]media.Block, error) {
 	c.logger.Debug("upload blocks request started",
 		zap.String("upload_id", uploadID),
 		zap.Int("num_blocks", len(blocks)),
@@ -419,7 +419,7 @@ func (c *Client) getNeededUploadBlocks(ctx context.Context, uploadID string, blo
 	return data.NeededUploadBlocks, nil
 }
 
-func (c *Client) uploadBlock(ctx context.Context, uploadID string, block uploadBlock, data []byte) error {
+func (c *Client) uploadBlock(ctx context.Context, uploadID string, block media.Block, data []byte) error {
 	c.logger.Debug("upload block request started",
 		zap.String("upload_id", uploadID),
 		zap.Int("seq", block.Seq),
@@ -532,12 +532,6 @@ func (c *Client) finishMinutesUpload(ctx context.Context, payload finishMinutesU
 	return nil
 }
 
-type uploadSource struct {
-	reader io.ReadSeeker
-	size   int64
-	name   string
-}
-
 type uploadSession struct {
 	uploadToken string
 	prepare     *prepareUploadResponse
@@ -553,118 +547,9 @@ func (s *uploadSession) result() *UploadResult {
 	}
 }
 
-func newUploadSource(options UploadOptions) (*uploadSource, error) {
-	name := strings.TrimSpace(options.Name)
-	size := options.Size
-	reader := options.Reader
-
-	if reader == nil {
-		if options.FilePath == "" {
-			return nil, errors.New("upload file path or reader is required")
-		}
-
-		file, err := os.Open(options.FilePath)
-		if err != nil {
-			return nil, err
-		}
-
-		info, err := file.Stat()
-		if err != nil {
-			_ = file.Close()
-			return nil, err
-		}
-
-		reader = file
-		size = info.Size()
-		if name == "" {
-			name = filepath.Base(options.FilePath)
-		}
-	}
-
-	if reader == nil {
-		return nil, errors.New("upload reader is required")
-	}
-	if size < 0 {
-		return nil, errors.New("upload size cannot be negative")
-	}
-	if size == 0 {
-		current, err := reader.Seek(0, io.SeekCurrent)
-		if err != nil {
-			return nil, errors.New("upload size is required when reader cannot report size")
-		}
-		end, err := reader.Seek(0, io.SeekEnd)
-		if err != nil {
-			return nil, errors.New("upload size is required when reader cannot report size")
-		}
-		if _, err := reader.Seek(current, io.SeekStart); err != nil {
-			return nil, err
-		}
-		size = end
-	}
-	if name == "" {
-		name = "upload"
-	}
-
-	return &uploadSource{
-		reader: reader,
-		size:   size,
-		name:   name,
-	}, nil
-}
-
-func readFileHeader(reader io.Reader) (string, error) {
-	header := make([]byte, fileHeaderSize)
-	n, err := io.ReadFull(reader, header)
-	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
-		return "", err
-	}
-
-	return base64.StdEncoding.EncodeToString(header[:n]), nil
-}
-
-func computeBlocks(reader io.ReadSeeker, size int64, blockSize int64) ([]uploadBlock, error) {
-	if blockSize <= 0 {
-		return nil, errors.New("prepare response missing block_size")
-	}
-	if err := seekStart(reader); err != nil {
-		return nil, err
-	}
-
-	var blocks []uploadBlock
-	buffer := make([]byte, blockSize)
-	for seq := 0; ; seq++ {
-		n, err := io.ReadFull(reader, buffer)
-		if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
-			return nil, err
-		}
-		if n == 0 {
-			break
-		}
-
-		data := buffer[:n]
-		hash := sha256.Sum256(data)
-		blocks = append(blocks, uploadBlock{
-			Hash:     base64.StdEncoding.EncodeToString(hash[:]),
-			Seq:      seq,
-			Size:     int64(n),
-			Checksum: strconv.FormatUint(uint64(adler32.Checksum(data)), 10),
-		})
-
-		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
-			break
-		}
-	}
-
-	if size == 0 && len(blocks) == 0 {
-		return []uploadBlock{}, nil
-	}
-
-	return blocks, nil
-}
-
-func uploadNeededBlocks(ctx context.Context, c *Client, reader io.ReadSeeker, uploadID string, blockSize int64, neededBlocks []uploadBlock) error {
+func uploadNeededBlocks(ctx context.Context, c *Client, reader io.ReadSeeker, uploadID string, blockSize int64, neededBlocks []media.Block) error {
 	for _, block := range neededBlocks {
-		data, err := readBlock(reader, block, blockSize)
+		data, err := media.ReadBlock(reader, block, blockSize)
 		if err != nil {
 			c.logger.Debug("upload block verification failed",
 				zap.String("upload_id", uploadID),
@@ -689,33 +574,6 @@ func uploadNeededBlocks(ctx context.Context, c *Client, reader io.ReadSeeker, up
 	}
 
 	return nil
-}
-
-func readBlock(reader io.ReadSeeker, block uploadBlock, blockSize int64) ([]byte, error) {
-	offset := int64(block.Seq) * blockSize
-	if _, err := reader.Seek(offset, io.SeekStart); err != nil {
-		return nil, err
-	}
-
-	data := make([]byte, block.Size)
-	if _, err := io.ReadFull(reader, data); err != nil {
-		return nil, err
-	}
-
-	hash := sha256.Sum256(data)
-	if got := base64.StdEncoding.EncodeToString(hash[:]); got != block.Hash {
-		return nil, fmt.Errorf("block %d hash mismatch", block.Seq)
-	}
-	if got := strconv.FormatUint(uint64(adler32.Checksum(data)), 10); got != block.Checksum {
-		return nil, fmt.Errorf("block %d checksum mismatch", block.Seq)
-	}
-
-	return data, nil
-}
-
-func seekStart(reader io.Seeker) error {
-	_, err := reader.Seek(0, io.SeekStart)
-	return err
 }
 
 func riskDetectionExtra() string {
@@ -762,19 +620,12 @@ func (r prepareUploadResponse) validate() error {
 
 type uploadBlocksRequest struct {
 	UploadID string        `json:"upload_id"`
-	Blocks   []uploadBlock `json:"blocks"`
+	Blocks   []media.Block `json:"blocks"`
 	Language string        `json:"language"`
 }
 
 type uploadBlocksResponse struct {
-	NeededUploadBlocks []uploadBlock `json:"needed_upload_blocks"`
-}
-
-type uploadBlock struct {
-	Hash     string `json:"hash"`
-	Seq      int    `json:"seq"`
-	Size     int64  `json:"size"`
-	Checksum string `json:"checksum"`
+	NeededUploadBlocks []media.Block `json:"needed_upload_blocks"`
 }
 
 type finishSpaceUploadRequest struct {

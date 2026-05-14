@@ -10,11 +10,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"openminutes/internal/media"
 )
 
 func TestUploadFileSourceAndReaderFailures(t *testing.T) {
@@ -89,7 +89,7 @@ func TestUploadFileDefaultFileIDCloserAndAutoTranscribeFalse(t *testing.T) {
 				NumBlocks:   1,
 			})
 		case "/space/api/box/upload/blocks":
-			writeEnvelope(t, w, uploadBlocksResponse{NeededUploadBlocks: []uploadBlock{}})
+			writeEnvelope(t, w, uploadBlocksResponse{NeededUploadBlocks: []media.Block{}})
 		case "/space/api/box/upload/finish/":
 			writeEnvelope(t, w, map[string]string{})
 		case "/minutes/api/upload/finish":
@@ -223,7 +223,7 @@ func TestUploadFileFailureStages(t *testing.T) {
 				case 3:
 					badBlock := goodBlock
 					badBlock.Hash = "bad"
-					writeEnvelope(t, w, uploadBlocksResponse{NeededUploadBlocks: []uploadBlock{badBlock}})
+					writeEnvelope(t, w, uploadBlocksResponse{NeededUploadBlocks: []media.Block{badBlock}})
 				default:
 					t.Fatalf("unexpected request %d", requestNumber)
 				}
@@ -239,7 +239,7 @@ func TestUploadFileFailureStages(t *testing.T) {
 				case 2:
 					writePrepare(t, w, 5, 1)
 				case 3:
-					writeEnvelope(t, w, uploadBlocksResponse{NeededUploadBlocks: []uploadBlock{goodBlock}})
+					writeEnvelope(t, w, uploadBlocksResponse{NeededUploadBlocks: []media.Block{goodBlock}})
 				case 4:
 					fmt.Fprint(w, `{"code":9,"msg":"block denied"}`)
 				default:
@@ -257,7 +257,7 @@ func TestUploadFileFailureStages(t *testing.T) {
 				case 2:
 					writePrepare(t, w, 5, 1)
 				case 3:
-					writeEnvelope(t, w, uploadBlocksResponse{NeededUploadBlocks: []uploadBlock{}})
+					writeEnvelope(t, w, uploadBlocksResponse{NeededUploadBlocks: []media.Block{}})
 				case 4:
 					fmt.Fprint(w, `{"code":9,"msg":"space finish denied"}`)
 				default:
@@ -275,7 +275,7 @@ func TestUploadFileFailureStages(t *testing.T) {
 				case 2:
 					writePrepare(t, w, 5, 1)
 				case 3:
-					writeEnvelope(t, w, uploadBlocksResponse{NeededUploadBlocks: []uploadBlock{}})
+					writeEnvelope(t, w, uploadBlocksResponse{NeededUploadBlocks: []media.Block{}})
 				case 4:
 					writeEnvelope(t, w, map[string]string{})
 				case 5:
@@ -322,10 +322,10 @@ func TestUploadPhaseHelpers(t *testing.T) {
 	t.Run("prepare source returns base64 header and rewinds", func(t *testing.T) {
 		client := newTestClient(t, "https://example.test", "https://space.example.test")
 		reader := bytes.NewReader([]byte("abc"))
-		header, err := client.prepareUploadSource(&uploadSource{
-			reader: reader,
-			size:   3,
-			name:   "clip.mp4",
+		header, err := client.prepareUploadSource(&media.Source{
+			Reader: reader,
+			Size:   3,
+			Name:   "clip.mp4",
 		})
 		if err != nil {
 			t.Fatalf("prepareUploadSource() error = %v, want nil", err)
@@ -344,10 +344,10 @@ func TestUploadPhaseHelpers(t *testing.T) {
 
 	t.Run("plan blocks validates prepared count", func(t *testing.T) {
 		client := newTestClient(t, "https://example.test", "https://space.example.test")
-		upload := &uploadSource{
-			reader: bytes.NewReader([]byte("abc")),
-			size:   3,
-			name:   "clip.mp4",
+		upload := &media.Source{
+			Reader: bytes.NewReader([]byte("abc")),
+			Size:   3,
+			Name:   "clip.mp4",
 		}
 		session := &uploadSession{prepare: &prepareUploadResponse{
 			UploadID:  "upload-1",
@@ -473,7 +473,7 @@ func TestUploadRequestCreationAndMarshalErrors(t *testing.T) {
 			name:  "upload block request creation",
 			setup: func(c *Client) { c.spaceBaseURL = "http://[::1" },
 			call: func(c *Client) error {
-				return c.uploadBlock(ctx, "upload-1", uploadBlock{Seq: 0, Size: 3, Checksum: "1"}, []byte("abc"))
+				return c.uploadBlock(ctx, "upload-1", media.Block{Seq: 0, Size: 3, Checksum: "1"}, []byte("abc"))
 			},
 		},
 		{
@@ -504,165 +504,6 @@ func TestUploadRequestCreationAndMarshalErrors(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestNewUploadSource(t *testing.T) {
-	t.Run("file path", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "clip.mp4")
-		if err := os.WriteFile(path, []byte("abc"), 0o600); err != nil {
-			t.Fatalf("WriteFile() error = %v", err)
-		}
-
-		source, err := newUploadSource(UploadOptions{FilePath: path})
-		if err != nil {
-			t.Fatalf("newUploadSource() error = %v, want nil", err)
-		}
-		if closer, ok := source.reader.(io.Closer); ok {
-			t.Cleanup(func() { _ = closer.Close() })
-		}
-		if source.name != "clip.mp4" || source.size != 3 {
-			t.Fatalf("source = %#v, want file name and size", source)
-		}
-	})
-
-	t.Run("file path open failure", func(t *testing.T) {
-		_, err := newUploadSource(UploadOptions{FilePath: filepath.Join(t.TempDir(), "missing.mp4")})
-		if err == nil {
-			t.Fatal("newUploadSource() error = nil, want open error")
-		}
-	})
-
-	t.Run("negative size", func(t *testing.T) {
-		_, err := newUploadSource(UploadOptions{Reader: bytes.NewReader(nil), Size: -1})
-		if err == nil || err.Error() != "upload size cannot be negative" {
-			t.Fatalf("newUploadSource() error = %v, want negative size", err)
-		}
-	})
-
-	t.Run("infers size and default name", func(t *testing.T) {
-		source, err := newUploadSource(UploadOptions{Reader: bytes.NewReader([]byte("abc"))})
-		if err != nil {
-			t.Fatalf("newUploadSource() error = %v, want nil", err)
-		}
-		if source.size != 3 || source.name != "upload" {
-			t.Fatalf("source = %#v, want inferred size and default name", source)
-		}
-	})
-
-	for _, tt := range []struct {
-		name         string
-		failSeekCall int
-		want         string
-	}{
-		{name: "current seek failure", failSeekCall: 1, want: "upload size is required"},
-		{name: "end seek failure", failSeekCall: 2, want: "upload size is required"},
-		{name: "restore seek failure", failSeekCall: 3, want: "seek failed"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			reader := &controlledReadSeeker{
-				reader:       bytes.NewReader([]byte("abc")),
-				failSeekCall: tt.failSeekCall,
-				seekErr:      errors.New("seek failed"),
-			}
-			_, err := newUploadSource(UploadOptions{Reader: reader})
-			if err == nil {
-				t.Fatal("newUploadSource() error = nil, want seek error")
-			}
-			if !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("newUploadSource() error = %q, want %q", err.Error(), tt.want)
-			}
-		})
-	}
-}
-
-func TestUploadHelpers(t *testing.T) {
-	t.Run("read short header", func(t *testing.T) {
-		got, err := readFileHeader(strings.NewReader("abc"))
-		if err != nil {
-			t.Fatalf("readFileHeader() error = %v, want nil", err)
-		}
-		if got != base64.StdEncoding.EncodeToString([]byte("abc")) {
-			t.Fatalf("readFileHeader() = %q, want base64 header", got)
-		}
-	})
-
-	t.Run("read header error", func(t *testing.T) {
-		wantErr := errors.New("read failed")
-		if _, err := readFileHeader(errorReader{err: wantErr}); !errors.Is(err, wantErr) {
-			t.Fatalf("readFileHeader() error = %v, want %v", err, wantErr)
-		}
-	})
-
-	t.Run("compute invalid block size", func(t *testing.T) {
-		if _, err := computeBlocks(bytes.NewReader([]byte("abc")), 3, 0); err == nil {
-			t.Fatal("computeBlocks() error = nil, want block size error")
-		}
-	})
-
-	t.Run("compute seek error", func(t *testing.T) {
-		wantErr := errors.New("seek failed")
-		reader := &controlledReadSeeker{reader: bytes.NewReader([]byte("abc")), failSeekCall: 1, seekErr: wantErr}
-		if _, err := computeBlocks(reader, 3, 5); !errors.Is(err, wantErr) {
-			t.Fatalf("computeBlocks() error = %v, want %v", err, wantErr)
-		}
-	})
-
-	t.Run("compute read error", func(t *testing.T) {
-		wantErr := errors.New("read failed")
-		reader := &controlledReadSeeker{reader: bytes.NewReader([]byte("abc")), readErr: wantErr}
-		if _, err := computeBlocks(reader, 3, 5); !errors.Is(err, wantErr) {
-			t.Fatalf("computeBlocks() error = %v, want %v", err, wantErr)
-		}
-	})
-
-	t.Run("compute zero size", func(t *testing.T) {
-		blocks, err := computeBlocks(bytes.NewReader(nil), 0, 5)
-		if err != nil {
-			t.Fatalf("computeBlocks() error = %v, want nil", err)
-		}
-		if blocks == nil || len(blocks) != 0 {
-			t.Fatalf("blocks = %#v, want empty slice", blocks)
-		}
-	})
-}
-
-func TestReadBlockErrors(t *testing.T) {
-	content := []byte("abc")
-	block := expectedUploadBlocks(t, content, 5)[0]
-
-	t.Run("seek error", func(t *testing.T) {
-		wantErr := errors.New("seek failed")
-		reader := &controlledReadSeeker{reader: bytes.NewReader(content), failSeekCall: 1, seekErr: wantErr}
-		if _, err := readBlock(reader, block, 5); !errors.Is(err, wantErr) {
-			t.Fatalf("readBlock() error = %v, want %v", err, wantErr)
-		}
-	})
-
-	t.Run("read error", func(t *testing.T) {
-		wantErr := errors.New("read failed")
-		reader := &controlledReadSeeker{reader: bytes.NewReader(content), readErr: wantErr}
-		if _, err := readBlock(reader, block, 5); !errors.Is(err, wantErr) {
-			t.Fatalf("readBlock() error = %v, want %v", err, wantErr)
-		}
-	})
-
-	t.Run("hash mismatch", func(t *testing.T) {
-		badBlock := block
-		badBlock.Hash = "bad"
-		_, err := readBlock(bytes.NewReader(content), badBlock, 5)
-		if err == nil || !strings.Contains(err.Error(), "hash mismatch") {
-			t.Fatalf("readBlock() error = %v, want hash mismatch", err)
-		}
-	})
-
-	t.Run("checksum mismatch", func(t *testing.T) {
-		badBlock := block
-		badBlock.Checksum = "bad"
-		_, err := readBlock(bytes.NewReader(content), badBlock, 5)
-		if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
-			t.Fatalf("readBlock() error = %v, want checksum mismatch", err)
-		}
-	})
 }
 
 func TestPrepareUploadResponseValidate(t *testing.T) {

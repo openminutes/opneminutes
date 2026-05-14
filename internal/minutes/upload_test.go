@@ -3,17 +3,17 @@ package minutes
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"hash/adler32"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+
+	"openminutes/internal/media"
 )
 
 func TestUploadFileFullFlow(t *testing.T) {
@@ -58,7 +58,7 @@ func TestUploadFileFullFlow(t *testing.T) {
 			if !blocksEqual(payload.Blocks, expectedBlocks) {
 				t.Fatalf("blocks = %#v, want %#v", payload.Blocks, expectedBlocks)
 			}
-			response := uploadBlocksResponse{NeededUploadBlocks: []uploadBlock{expectedBlocks[0], expectedBlocks[2]}}
+			response := uploadBlocksResponse{NeededUploadBlocks: []media.Block{expectedBlocks[0], expectedBlocks[2]}}
 			writeEnvelope(t, w, response)
 		case "/space/api/box/stream/upload/block":
 			assertMethod(t, r, http.MethodPost)
@@ -227,23 +227,17 @@ func TestUploadFileMissingNeededBlocks(t *testing.T) {
 	}
 }
 
-func expectedUploadBlocks(t *testing.T, content []byte, blockSize int) []uploadBlock {
+func expectedUploadBlocks(t *testing.T, content []byte, blockSize int) []media.Block {
 	t.Helper()
 
-	var blocks []uploadBlock
+	var blocks []media.Block
 	for seq, offset := 0, 0; offset < len(content); seq, offset = seq+1, offset+blockSize {
 		end := offset + blockSize
 		if end > len(content) {
 			end = len(content)
 		}
 		data := content[offset:end]
-		hash := sha256.Sum256(data)
-		blocks = append(blocks, uploadBlock{
-			Hash:     base64.StdEncoding.EncodeToString(hash[:]),
-			Seq:      seq,
-			Size:     int64(len(data)),
-			Checksum: strconv.FormatUint(uint64(adler32.Checksum(data)), 10),
-		})
+		blocks = append(blocks, media.NewBlock(seq, data))
 	}
 
 	return blocks
@@ -259,7 +253,7 @@ func blockBytes(content []byte, blockSize int, seq int) []byte {
 	return content[offset:end]
 }
 
-func blocksEqual(a, b []uploadBlock) bool {
+func blocksEqual(a, b []media.Block) bool {
 	if len(a) != len(b) {
 		return false
 	}

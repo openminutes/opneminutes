@@ -3,39 +3,14 @@ package logic
 import (
 	"context"
 	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
-	"time"
 
 	"openminutes/internal/config"
+	"openminutes/internal/media"
 	"openminutes/internal/minutes"
 
 	"go.uber.org/zap"
 )
-
-const (
-	maxUploadFileSize = 6 * 1024 * 1024 * 1024
-	maxUploadDuration = 6 * time.Hour
-)
-
-var supportedUploadExtensions = map[string]struct{}{
-	".wav":  {},
-	".mp3":  {},
-	".m4a":  {},
-	".aac":  {},
-	".ogg":  {},
-	".wma":  {},
-	".amr":  {},
-	".avi":  {},
-	".wmv":  {},
-	".mov":  {},
-	".mp4":  {},
-	".m4v":  {},
-	".mpeg": {},
-	".flv":  {},
-}
 
 type ListClient interface {
 	ListMinutesPage(context.Context, minutes.ListOptions) (*minutes.ListMinutesPageResult, error)
@@ -99,56 +74,7 @@ func UploadFile(ctx context.Context, client UploadClient, filePath string, logge
 }
 
 func ValidateUploadFile(filePath string, logger *zap.Logger) error {
-	if logger == nil {
-		logger = zap.NewNop()
-	}
-
-	info, err := os.Stat(filePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("file %q does not exist", filePath)
-		}
-		return fmt.Errorf("stat file %q: %w", filePath, err)
-	}
-	if info.IsDir() {
-		return fmt.Errorf("file %q is a directory", filePath)
-	}
-
-	extension := strings.ToLower(filepath.Ext(filePath))
-	if _, ok := supportedUploadExtensions[extension]; !ok {
-		return fmt.Errorf("unsupported file extension %q", extension)
-	}
-
-	if info.Size() > maxUploadFileSize {
-		return fmt.Errorf("file size %d exceeds maximum %d bytes", info.Size(), int64(maxUploadFileSize))
-	}
-
-	duration, known, err := probeUploadDuration(filePath, extension)
-	if err != nil {
-		logger.Debug("upload duration probe failed",
-			zap.String("path", filePath),
-			zap.String("extension", extension),
-			zap.Error(err),
-		)
-		return nil
-	}
-	if !known {
-		logger.Debug("upload duration probe skipped",
-			zap.String("path", filePath),
-			zap.String("extension", extension),
-		)
-		return nil
-	}
-	if duration > maxUploadDuration {
-		return fmt.Errorf("file duration %s exceeds maximum %s", duration, maxUploadDuration)
-	}
-
-	logger.Debug("upload duration probe completed",
-		zap.String("path", filePath),
-		zap.String("extension", extension),
-		zap.Duration("duration", duration),
-	)
-	return nil
+	return media.ValidateUploadFile(filePath, logger)
 }
 
 func MinuteURL(baseURL, objectToken string) string {
