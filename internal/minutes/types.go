@@ -42,6 +42,13 @@ type ListOptions struct {
 	Timestamp int64
 }
 
+// ListMinutesPageResult contains one page of minutes from the list API.
+type ListMinutesPageResult struct {
+	Items         []Minute
+	HasMore       bool
+	NextTimestamp int64
+}
+
 // Minute is a Feishu Minutes list item.
 type Minute struct {
 	ObjectToken string `json:"object_token"`

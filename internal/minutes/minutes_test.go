@@ -55,6 +55,112 @@ func TestListMinutesSinglePage(t *testing.T) {
 	}
 }
 
+func TestListMinutesPageDefaultQuery(t *testing.T) {
+	var gotQuery url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/minutes/api/space/list" {
+			t.Fatalf("path = %q, want /minutes/api/space/list", r.URL.Path)
+		}
+		gotQuery = r.URL.Query()
+		fmt.Fprint(w, `{"code":0,"msg":"success","data":{"has_more":false,"list":[]}}`)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server.URL, server.URL)
+
+	result, err := client.ListMinutesPage(context.Background(), ListOptions{})
+	if err != nil {
+		t.Fatalf("ListMinutesPage() error = %v, want nil", err)
+	}
+	if len(result.Items) != 0 {
+		t.Fatalf("len(result.Items) = %d, want 0", len(result.Items))
+	}
+	if result.HasMore {
+		t.Fatal("result.HasMore = true, want false")
+	}
+
+	wantQuery := map[string]string{
+		"size":       "20",
+		"space_name": "1",
+		"rank":       "1",
+		"asc":        "false",
+		"note_info":  "true",
+		"owner_type": "1",
+		"language":   "zh_cn",
+	}
+	for key, want := range wantQuery {
+		if got := gotQuery.Get(key); got != want {
+			t.Fatalf("query %s = %q, want %q", key, got, want)
+		}
+	}
+	if got := gotQuery.Get("timestamp"); got != "" {
+		t.Fatalf("timestamp = %q, want empty", got)
+	}
+}
+
+func TestListMinutesPageIncludesTimestampWhenProvided(t *testing.T) {
+	var gotQuery url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		fmt.Fprint(w, `{"code":0,"msg":"success","data":{"has_more":false,"list":[]}}`)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server.URL, server.URL)
+
+	if _, err := client.ListMinutesPage(context.Background(), ListOptions{Size: 50, Timestamp: 100}); err != nil {
+		t.Fatalf("ListMinutesPage() error = %v, want nil", err)
+	}
+
+	if got := gotQuery.Get("size"); got != "50" {
+		t.Fatalf("size = %q, want 50", got)
+	}
+	if got := gotQuery.Get("timestamp"); got != "100" {
+		t.Fatalf("timestamp = %q, want 100", got)
+	}
+}
+
+func TestListMinutesPageReturnsPaginationMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"code":0,"msg":"success","data":{"has_more":true,"list":[{"object_token":"new","share_time":200},{"object_token":"old","share_time":100}]}}`)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server.URL, server.URL)
+
+	result, err := client.ListMinutesPage(context.Background(), ListOptions{})
+	if err != nil {
+		t.Fatalf("ListMinutesPage() error = %v, want nil", err)
+	}
+
+	if got := tokens(result.Items); strings.Join(got, ",") != "new,old" {
+		t.Fatalf("tokens = %#v, want new,old", got)
+	}
+	if !result.HasMore {
+		t.Fatal("result.HasMore = false, want true")
+	}
+	if result.NextTimestamp != 100 {
+		t.Fatalf("result.NextTimestamp = %d, want 100", result.NextTimestamp)
+	}
+}
+
+func TestListMinutesPageMissingPaginationShareTime(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"code":0,"msg":"success","data":{"has_more":true,"list":[{"object_token":"bad"}]}}`)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server.URL, server.URL)
+
+	_, err := client.ListMinutesPage(context.Background(), ListOptions{})
+	if err == nil {
+		t.Fatal("ListMinutesPage() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "share_time") {
+		t.Fatalf("error = %q, want share_time", err.Error())
+	}
+}
+
 func TestListMinutesMultiplePages(t *testing.T) {
 	var timestamps []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -12,6 +12,66 @@ import (
 	"go.uber.org/zap"
 )
 
+// ListMinutesPage lists one page of minutes.
+func (c *Client) ListMinutesPage(ctx context.Context, options ListOptions) (*ListMinutesPageResult, error) {
+	c.logger.Debug("list minutes page requested",
+		zap.Int64("timestamp", options.Timestamp),
+		zap.Int("size", options.Size),
+		zap.String("language", defaultString(options.Language, defaultLanguage)),
+	)
+
+	query := listQuery(options, options.Timestamp)
+	req, err := c.newAPIRequest(ctx, http.MethodGet, "/minutes/api/space/list", query, nil)
+	if err != nil {
+		c.logger.Debug("list minutes request creation failed",
+			zap.Int64("timestamp", options.Timestamp),
+			zap.Error(err),
+		)
+		return nil, err
+	}
+
+	var data listResponse
+	if err := c.doJSON(req, &data); err != nil {
+		c.logger.Debug("list minutes page failed",
+			zap.Int64("timestamp", options.Timestamp),
+			zap.Error(err),
+		)
+		return nil, err
+	}
+	if data.List == nil {
+		c.logger.Debug("list minutes page invalid",
+			zap.Int64("timestamp", options.Timestamp),
+			zap.String("reason", "missing_list"),
+		)
+		return nil, errors.New("minutes list response missing list")
+	}
+
+	nextTimestamp := int64(0)
+	if len(data.List) > 0 {
+		nextTimestamp = data.List[len(data.List)-1].ShareTime
+	}
+	c.logger.Debug("list minutes page received",
+		zap.Int64("timestamp", options.Timestamp),
+		zap.Int("count", len(data.List)),
+		zap.Bool("has_more", data.HasMore),
+		zap.Int64("next_timestamp", nextTimestamp),
+	)
+
+	if data.HasMore && len(data.List) > 0 && nextTimestamp == 0 {
+		c.logger.Debug("list minutes pagination failed",
+			zap.Int64("timestamp", options.Timestamp),
+			zap.String("reason", "missing_next_timestamp"),
+		)
+		return nil, errors.New("minutes list response missing next page share_time")
+	}
+
+	return &ListMinutesPageResult{
+		Items:         data.List,
+		HasMore:       data.HasMore,
+		NextTimestamp: nextTimestamp,
+	}, nil
+}
+
 // ListMinutes lists all available minutes, following server pagination.
 func (c *Client) ListMinutes(ctx context.Context, options ListOptions) ([]Minute, error) {
 	var all []Minute
@@ -24,23 +84,10 @@ func (c *Client) ListMinutes(ctx context.Context, options ListOptions) ([]Minute
 	)
 
 	for {
-		query := listQuery(options, timestamp)
-		c.logger.Debug("list minutes page requested",
-			zap.Int("page", page),
-			zap.Int64("timestamp", timestamp),
-		)
-		req, err := c.newAPIRequest(ctx, http.MethodGet, "/minutes/api/space/list", query, nil)
+		pageOptions := options
+		pageOptions.Timestamp = timestamp
+		result, err := c.ListMinutesPage(ctx, pageOptions)
 		if err != nil {
-			c.logger.Debug("list minutes request creation failed",
-				zap.Int("page", page),
-				zap.Int64("timestamp", timestamp),
-				zap.Error(err),
-			)
-			return nil, err
-		}
-
-		var data listResponse
-		if err := c.doJSON(req, &data); err != nil {
 			c.logger.Debug("list minutes page failed",
 				zap.Int("page", page),
 				zap.Int64("timestamp", timestamp),
@@ -48,51 +95,31 @@ func (c *Client) ListMinutes(ctx context.Context, options ListOptions) ([]Minute
 			)
 			return nil, err
 		}
-		if data.List == nil {
-			c.logger.Debug("list minutes page invalid",
-				zap.Int("page", page),
-				zap.Int64("timestamp", timestamp),
-				zap.String("reason", "missing_list"),
-			)
-			return nil, errors.New("minutes list response missing list")
-		}
 
-		all = append(all, data.List...)
-		nextTimestamp := int64(0)
-		if len(data.List) > 0 {
-			nextTimestamp = data.List[len(data.List)-1].ShareTime
-		}
-		c.logger.Debug("list minutes page received",
+		all = append(all, result.Items...)
+		c.logger.Debug("list minutes page collected",
 			zap.Int("page", page),
 			zap.Int64("timestamp", timestamp),
-			zap.Int("count", len(data.List)),
-			zap.Bool("has_more", data.HasMore),
-			zap.Int64("next_timestamp", nextTimestamp),
+			zap.Int("count", len(result.Items)),
+			zap.Bool("has_more", result.HasMore),
+			zap.Int64("next_timestamp", result.NextTimestamp),
 			zap.Int("total", len(all)),
 		)
-		if !data.HasMore || len(data.List) == 0 {
+		if !result.HasMore || len(result.Items) == 0 {
 			c.logger.Debug("list minutes completed", zap.Int("total", len(all)))
 			return all, nil
 		}
-
-		if nextTimestamp == 0 {
+		if result.NextTimestamp == timestamp {
 			c.logger.Debug("list minutes pagination failed",
 				zap.Int("page", page),
 				zap.Int64("timestamp", timestamp),
-				zap.String("reason", "missing_next_timestamp"),
-			)
-			return nil, errors.New("minutes list response missing next page share_time")
-		}
-		if nextTimestamp == timestamp {
-			c.logger.Debug("list minutes pagination failed",
-				zap.Int("page", page),
-				zap.Int64("timestamp", timestamp),
-				zap.Int64("next_timestamp", nextTimestamp),
+				zap.Int64("next_timestamp", result.NextTimestamp),
 				zap.String("reason", "pagination_not_advanced"),
 			)
 			return nil, fmt.Errorf("minutes list pagination did not advance from timestamp %d", timestamp)
 		}
-		timestamp = nextTimestamp
+
+		timestamp = result.NextTimestamp
 		page++
 	}
 }

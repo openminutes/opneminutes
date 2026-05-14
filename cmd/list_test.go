@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,9 +12,9 @@ import (
 	"openminutes/internal/minutes"
 )
 
-type listMinutesClientFunc func(context.Context, minutes.ListOptions) ([]minutes.Minute, error)
+type listMinutesClientFunc func(context.Context, minutes.ListOptions) (*minutes.ListMinutesPageResult, error)
 
-func (f listMinutesClientFunc) ListMinutes(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
+func (f listMinutesClientFunc) ListMinutesPage(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
 	return f(ctx, options)
 }
 
@@ -27,13 +28,13 @@ func withListMinutesClient(t *testing.T, factory func(minutes.Config) (listMinut
 	})
 }
 
-func executeListCommand(t *testing.T, config Config) (string, error) {
+func executeListCommand(t *testing.T, config Config, args ...string) (string, error) {
 	t.Helper()
 
 	cmd := newListCommand()
 	stdout := new(bytes.Buffer)
 	cmd.SetOut(stdout)
-	cmd.SetArgs([]string{})
+	cmd.SetArgs(args)
 	cmd.SetContext(contextWithConfig(context.Background(), config))
 
 	err := cmd.Execute()
@@ -54,15 +55,17 @@ func TestListCommandReadsConfigAndCallsListAPI(t *testing.T) {
 
 	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
 		gotConfig = config
-		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
 			calls++
 			gotOptions = options
 			gotMarker = ctx.Value(ctxKey)
-			return []minutes.Minute{{
-				ObjectToken: "token-1",
-				Topic:       "First",
-				URL:         "https://example.test/minutes/token-1",
-			}}, nil
+			return &minutes.ListMinutesPageResult{
+				Items: []minutes.Minute{{
+					ObjectToken: "token-1",
+					Topic:       "First",
+					URL:         "https://example.test/minutes/token-1",
+				}},
+			}, nil
 		}), nil
 	})
 
@@ -83,22 +86,44 @@ func TestListCommandReadsConfigAndCallsListAPI(t *testing.T) {
 		t.Fatalf("client config = %#v, want %#v", gotConfig, wantConfig)
 	}
 	if calls != 1 {
-		t.Fatalf("ListMinutes() calls = %d, want 1", calls)
+		t.Fatalf("ListMinutesPage() calls = %d, want 1", calls)
 	}
 	if gotMarker != "marker" {
-		t.Fatalf("ListMinutes() context marker = %#v, want marker", gotMarker)
+		t.Fatalf("ListMinutesPage() context marker = %#v, want marker", gotMarker)
 	}
-	if !reflect.DeepEqual(gotOptions, minutes.ListOptions{}) {
-		t.Fatalf("ListMinutes() options = %#v, want zero value", gotOptions)
+	if !reflect.DeepEqual(gotOptions, minutes.ListOptions{Size: 20}) {
+		t.Fatalf("ListMinutesPage() options = %#v, want default size", gotOptions)
+	}
+}
+
+func TestListCommandPassesCustomPaginationOptions(t *testing.T) {
+	var gotOptions minutes.ListOptions
+	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
+			gotOptions = options
+			return &minutes.ListMinutesPageResult{}, nil
+		}), nil
+	})
+
+	_, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, "--size", "50", "--timestamp", "100")
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	want := minutes.ListOptions{Size: 50, Timestamp: 100}
+	if !reflect.DeepEqual(gotOptions, want) {
+		t.Fatalf("ListMinutesPage() options = %#v, want %#v", gotOptions, want)
 	}
 }
 
 func TestListCommandPrintsMinutesInOrder(t *testing.T) {
 	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
-		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
-			return []minutes.Minute{
-				{ObjectToken: "token-1", Topic: "First", URL: "https://example.test/first"},
-				{ObjectToken: "token-2", Topic: "Second", URL: "https://example.test/second"},
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
+			return &minutes.ListMinutesPageResult{
+				Items: []minutes.Minute{
+					{ObjectToken: "token-1", Topic: "First", URL: "https://example.test/first"},
+					{ObjectToken: "token-2", Topic: "Second", URL: "https://example.test/second"},
+				},
 			}, nil
 		}), nil
 	})
@@ -120,8 +145,8 @@ func TestListCommandPrintsMinutesInOrder(t *testing.T) {
 
 func TestListCommandPrintsEmptyMessage(t *testing.T) {
 	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
-		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
-			return nil, nil
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
+			return &minutes.ListMinutesPageResult{}, nil
 		}), nil
 	})
 
@@ -137,8 +162,10 @@ func TestListCommandPrintsEmptyMessage(t *testing.T) {
 
 func TestListCommandPrintsFallbackTopicAndURL(t *testing.T) {
 	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
-		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
-			return []minutes.Minute{{ObjectToken: "token-1"}}, nil
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
+			return &minutes.ListMinutesPageResult{
+				Items: []minutes.Minute{{ObjectToken: "token-1"}},
+			}, nil
 		}), nil
 	})
 
@@ -150,6 +177,59 @@ func TestListCommandPrintsFallbackTopicAndURL(t *testing.T) {
 	want := "token-1 (untitled) https://meetings.feishu.cn/minutes/token-1\n"
 	if stdout != want {
 		t.Fatalf("stdout = %q, want %q", stdout, want)
+	}
+}
+
+func TestListCommandPrintsNextPageFooter(t *testing.T) {
+	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
+			return &minutes.ListMinutesPageResult{
+				Items: []minutes.Minute{{
+					ObjectToken: "token-1",
+					Topic:       "First",
+					URL:         "https://example.test/first",
+				}},
+				HasMore:       true,
+				NextTimestamp: 123,
+			}, nil
+		}), nil
+	})
+
+	stdout, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, "--size", "50")
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	want := strings.Join([]string{
+		"token-1 First https://example.test/first",
+		"Next page: openminutes list --size 50 --timestamp 123",
+		"",
+	}, "\n")
+	if stdout != want {
+		t.Fatalf("stdout = %q, want %q", stdout, want)
+	}
+}
+
+func TestListCommandDoesNotPrintNextPageFooterWhenHasMoreFalse(t *testing.T) {
+	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
+			return &minutes.ListMinutesPageResult{
+				Items: []minutes.Minute{{
+					ObjectToken: "token-1",
+					Topic:       "First",
+					URL:         "https://example.test/first",
+				}},
+				NextTimestamp: 123,
+			}, nil
+		}), nil
+	})
+
+	stdout, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"})
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+	if strings.Contains(stdout, "Next page:") {
+		t.Fatalf("stdout = %q, want no next page footer", stdout)
 	}
 }
 
@@ -182,7 +262,7 @@ func TestListCommandReturnsClientError(t *testing.T) {
 func TestListCommandReturnsListError(t *testing.T) {
 	wantErr := errors.New("list failed")
 	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
-		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
 			return nil, wantErr
 		}), nil
 	})
@@ -190,5 +270,47 @@ func TestListCommandReturnsListError(t *testing.T) {
 	_, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Execute() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestListCommandRejectsInvalidPaginationOptions(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "zero size",
+			args:    []string{"--size", "0"},
+			wantErr: "size must be greater than 0",
+		},
+		{
+			name:    "negative size",
+			args:    []string{"--size", "-1"},
+			wantErr: "size must be greater than 0",
+		},
+		{
+			name:    "negative timestamp",
+			args:    []string{"--timestamp", "-1"},
+			wantErr: "timestamp must be greater than or equal to 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
+				return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
+					return nil, fmt.Errorf("ListMinutesPage() should not be called")
+				}), nil
+			})
+
+			_, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, tt.args...)
+			if err == nil {
+				t.Fatal("Execute() error = nil, want error")
+			}
+			if err.Error() != tt.wantErr {
+				t.Fatalf("Execute() error = %q, want %q", err.Error(), tt.wantErr)
+			}
+		})
 	}
 }

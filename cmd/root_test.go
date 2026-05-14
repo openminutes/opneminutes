@@ -149,12 +149,14 @@ func TestRootCommandVerboseUnknownCommandDoesNotRequireConfig(t *testing.T) {
 
 func TestRootCommandSubcommands(t *testing.T) {
 	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
-		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
-			return []minutes.Minute{{
-				ObjectToken: "token-1",
-				Topic:       "Root",
-				URL:         "https://example.test/root",
-			}}, nil
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
+			return &minutes.ListMinutesPageResult{
+				Items: []minutes.Minute{{
+					ObjectToken: "token-1",
+					Topic:       "Root",
+					URL:         "https://example.test/root",
+				}},
+			}, nil
 		}), nil
 	})
 
@@ -204,12 +206,14 @@ func TestRootCommandVerboseListWritesDebugLogsToStderr(t *testing.T) {
 			t.Fatal("config.Logger = nil, want verbose logger")
 		}
 		config.Logger.Debug("mock list client received logger")
-		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
-			return []minutes.Minute{{
-				ObjectToken: "token-1",
-				Topic:       "Verbose",
-				URL:         "https://example.test/verbose",
-			}}, nil
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
+			return &minutes.ListMinutesPageResult{
+				Items: []minutes.Minute{{
+					ObjectToken: "token-1",
+					Topic:       "Verbose",
+					URL:         "https://example.test/verbose",
+				}},
+			}, nil
 		}), nil
 	})
 
@@ -237,8 +241,10 @@ func TestRootCommandVerboseListFlagAfterSubcommand(t *testing.T) {
 		if config.Logger == nil {
 			t.Fatal("config.Logger = nil, want verbose logger")
 		}
-		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
-			return []minutes.Minute{{ObjectToken: "token-1", Topic: "After", URL: "https://example.test/after"}}, nil
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
+			return &minutes.ListMinutesPageResult{
+				Items: []minutes.Minute{{ObjectToken: "token-1", Topic: "After", URL: "https://example.test/after"}},
+			}, nil
 		}), nil
 	})
 
@@ -288,12 +294,14 @@ func TestRootCommandSubcommandUsesEnvWithMissingManualConfig(t *testing.T) {
 	t.Setenv("OPENMINUTES_REGION", "larksuite")
 	t.Setenv("OPENMINUTES_COOKIE", "session=env")
 	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
-		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
-			return []minutes.Minute{{
-				ObjectToken: "token-env",
-				Topic:       "Env",
-				URL:         "https://example.test/env",
-			}}, nil
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
+			return &minutes.ListMinutesPageResult{
+				Items: []minutes.Minute{{
+					ObjectToken: "token-env",
+					Topic:       "Env",
+					URL:         "https://example.test/env",
+				}},
+			}, nil
 		}), nil
 	})
 

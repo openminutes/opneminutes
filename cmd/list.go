@@ -16,7 +16,7 @@ import (
 )
 
 type listMinutesClient interface {
-	ListMinutes(context.Context, minutes.ListOptions) ([]minutes.Minute, error)
+	ListMinutesPage(context.Context, minutes.ListOptions) (*minutes.ListMinutesPageResult, error)
 }
 
 var newListMinutesClient = func(config minutes.Config) (listMinutesClient, error) {
@@ -24,7 +24,10 @@ var newListMinutesClient = func(config minutes.Config) (listMinutesClient, error
 }
 
 func newListCommand() *cobra.Command {
-	return &cobra.Command{
+	var size int
+	var timestamp int64
+
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List Feishu minutes",
 		Annotations: map[string]string{
@@ -38,6 +41,10 @@ This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 		RunE: runListCommand,
 	}
+	cmd.Flags().IntVar(&size, "size", 20, "number of minutes to request")
+	cmd.Flags().Int64Var(&timestamp, "timestamp", 0, "pagination timestamp")
+
+	return cmd
 }
 
 func runListCommand(cmd *cobra.Command, args []string) error {
@@ -48,6 +55,21 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 	if !ok {
 		logger.Debug("list command missing config")
 		return errors.New("config is required")
+	}
+
+	size, err := cmd.Flags().GetInt("size")
+	if err != nil {
+		return err
+	}
+	if size <= 0 {
+		return errors.New("size must be greater than 0")
+	}
+	timestamp, err := cmd.Flags().GetInt64("timestamp")
+	if err != nil {
+		return err
+	}
+	if timestamp < 0 {
+		return errors.New("timestamp must be greater than or equal to 0")
 	}
 
 	clientConfig := minutes.Config{
@@ -64,12 +86,16 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	items, err := client.ListMinutes(cmd.Context(), minutes.ListOptions{})
+	result, err := client.ListMinutesPage(cmd.Context(), minutes.ListOptions{
+		Size:      size,
+		Timestamp: timestamp,
+	})
 	if err != nil {
 		logger.Debug("list minutes failed", zap.Error(err))
 		return err
 	}
 
+	items := result.Items
 	if len(items) == 0 {
 		logger.Debug("list command completed", zap.Int("count", 0))
 		cmd.Println("No minutes found.")
@@ -81,8 +107,17 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+	if result.HasMore {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Next page: openminutes list --size %d --timestamp %d\n", size, result.NextTimestamp); err != nil {
+			return err
+		}
+	}
 
-	logger.Debug("list command completed", zap.Int("count", len(items)))
+	logger.Debug("list command completed",
+		zap.Int("count", len(items)),
+		zap.Bool("has_more", result.HasMore),
+		zap.Int64("next_timestamp", result.NextTimestamp),
+	)
 	return nil
 }
 
