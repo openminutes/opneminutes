@@ -11,6 +11,9 @@ func newListCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "A brief description of your command",
+		Annotations: map[string]string{
+			requiresConfigAnnotation: "true",
+		},
 		Long: `A longer description that spans multiple lines and likely contains examples
 and usage of using your command. For example:
 

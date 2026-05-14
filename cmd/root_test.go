@@ -3,8 +3,11 @@ package cmd
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func executeCommand(args ...string) (string, string, error) {
@@ -18,6 +21,17 @@ func executeCommand(args ...string) (string, string, error) {
 
 	err := cmd.Execute()
 	return stdout.String(), stderr.String(), err
+}
+
+func executeCommandWithConfig(t *testing.T, args ...string) (string, string, error) {
+	t.Helper()
+	withoutOpenMinutesEnv(t)
+
+	configPath := writeConfig(t, `region = "feishu"
+cookie = "session=abc"
+`)
+
+	return executeCommand(append([]string{"--config", configPath}, args...)...)
 }
 
 func TestRootCommandHelp(t *testing.T) {
@@ -34,6 +48,30 @@ func TestRootCommandHelp(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, want to contain %q", stdout, want)
 		}
+	}
+}
+
+func TestRootCommandHelpSubcommandDoesNotRequireConfig(t *testing.T) {
+	withoutOpenMinutesEnv(t)
+
+	configPath := filepath.Join(t.TempDir(), "openminutes", "config.toml")
+	withDefaultConfigPath(t, configPath)
+
+	stdout, stderr, err := executeCommand("help")
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
+	}
+
+	if !strings.Contains(stdout, "Available Commands:") {
+		t.Fatalf("stdout = %q, want available commands", stdout)
+	}
+
+	if _, statErr := os.Stat(configPath); !os.IsNotExist(statErr) {
+		t.Fatalf("config file stat error = %v, want not exist", statErr)
 	}
 }
 
@@ -77,7 +115,7 @@ func TestRootCommandSubcommands(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stdout, stderr, err := executeCommand(tt.args...)
+			stdout, stderr, err := executeCommandWithConfig(t, tt.args...)
 			if err != nil {
 				t.Fatalf("Execute() error = %v, want nil", err)
 			}
@@ -90,6 +128,99 @@ func TestRootCommandSubcommands(t *testing.T) {
 				t.Fatalf("stdout = %q, want %q", stdout, tt.want)
 			}
 		})
+	}
+}
+
+func TestRootCommandSubcommandCreatesManualConfig(t *testing.T) {
+	withoutOpenMinutesEnv(t)
+
+	configPath := filepath.Join(t.TempDir(), "custom", "config.toml")
+
+	stdout, stderr, err := executeCommand("--config", configPath, "list")
+	if err == nil {
+		t.Fatal("Execute() error = nil, want error")
+	}
+
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+
+	if !strings.Contains(stderr, "cookie is required") {
+		t.Fatalf("stderr = %q, want cookie required", stderr)
+	}
+
+	data, readErr := os.ReadFile(configPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile() error = %v", readErr)
+	}
+
+	if string(data) != configTemplate {
+		t.Fatalf("config file = %q, want %q", data, configTemplate)
+	}
+}
+
+func TestRootCommandSubcommandUsesEnvWithMissingManualConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "custom", "config.toml")
+	t.Setenv("OPENMINUTES_REGION", "larksuite")
+	t.Setenv("OPENMINUTES_COOKIE", "session=env")
+
+	stdout, stderr, err := executeCommand("--config", configPath, "list")
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
+	}
+
+	if stdout != "list called\n" {
+		t.Fatalf("stdout = %q, want list called", stdout)
+	}
+
+	data, readErr := os.ReadFile(configPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile() error = %v", readErr)
+	}
+
+	if string(data) != configTemplate {
+		t.Fatalf("config file = %q, want %q", data, configTemplate)
+	}
+}
+
+func TestRootCommandStoresConfigInContext(t *testing.T) {
+	withoutOpenMinutesEnv(t)
+
+	configPath := writeConfig(t, `region = "larksuite"
+cookie = "session=abc"
+`)
+	var gotConfig Config
+	var hasConfig bool
+
+	cmd := newRootCommand()
+	cmd.AddCommand(&cobra.Command{
+		Use: "inspect-config",
+		Annotations: map[string]string{
+			requiresConfigAnnotation: "true",
+		},
+		Run: func(cmd *cobra.Command, args []string) {
+			gotConfig, hasConfig = configFromCommand(cmd)
+		},
+	})
+	cmd.SetArgs([]string{"--config", configPath, "inspect-config"})
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	if !hasConfig {
+		t.Fatal("configFromCommand() ok = false, want true")
+	}
+
+	wantConfig := Config{Region: "larksuite", Cookie: "session=abc"}
+	if gotConfig != wantConfig {
+		t.Fatalf("config = %#v, want %#v", gotConfig, wantConfig)
 	}
 }
 
@@ -118,9 +249,14 @@ func TestRootCommandVersion(t *testing.T) {
 }
 
 func TestExecute(t *testing.T) {
+	withoutOpenMinutesEnv(t)
+
 	oldArgs := os.Args
 	oldExit := exit
-	os.Args = []string{"openminutes", "get"}
+	configPath := writeConfig(t, `region = "feishu"
+cookie = "session=abc"
+`)
+	os.Args = []string{"openminutes", "--config", configPath, "get"}
 	exit = func(code int) {
 		t.Fatalf("exit called with code %d", code)
 	}
@@ -133,8 +269,13 @@ func TestExecute(t *testing.T) {
 }
 
 func TestExecuteCommand(t *testing.T) {
+	withoutOpenMinutesEnv(t)
+
 	cmd := newRootCommand()
-	cmd.SetArgs([]string{"get"})
+	configPath := writeConfig(t, `region = "feishu"
+cookie = "session=abc"
+`)
+	cmd.SetArgs([]string{"--config", configPath, "get"})
 	cmd.SetOut(new(bytes.Buffer))
 	cmd.SetErr(new(bytes.Buffer))
 
