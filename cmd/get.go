@@ -37,20 +37,25 @@ var openGetOutputFile = func(outputPath string) (getOutputFile, error) {
 func newGetCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "get TOKEN",
-		Short:        "Export Feishu minutes subtitles",
+		Short:        "Export text from a Minute",
 		Args:         validateGetArgs,
 		SilenceUsage: true,
 		Annotations: map[string]string{
 			requiresConfigAnnotation: "true",
 		},
-		Long: `Export subtitle text from a Feishu Minutes object token.
+		Long: `Export text from a Minute.
 
-The output file is created exclusively and existing files are never overwritten.`,
+Export one Minute as txt or srt. Speaker names and timestamps can be included
+with flags. The default output path is TOKEN.txt for the default txt format;
+srt output uses TOKEN.srt unless --output is set. Output files are created
+exclusively and existing files are never overwritten.`,
+		Example: `  openminutes get m_abc123
+  openminutes get m_abc123 --file_type srt --speaker --timestamp --output meeting.srt`,
 		RunE: runGetCommand,
 	}
-	cmd.Flags().String("file_type", "txt", "subtitle file type: txt or srt")
-	cmd.Flags().Bool("speaker", false, "include speaker names")
-	cmd.Flags().Bool("timestamp", false, "include timestamps")
+	cmd.Flags().String("file_type", "txt", "export format: txt or srt")
+	cmd.Flags().Bool("speaker", false, "include speaker names in the exported text")
+	cmd.Flags().Bool("timestamp", false, "include timestamps in the exported text")
 	cmd.Flags().String("output", "", "output file path")
 
 	return cmd

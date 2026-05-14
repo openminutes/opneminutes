@@ -26,17 +26,24 @@ var newDeleteMinutesClient = func(config minutes.Config) (deleteMinutesClient, e
 func newDeleteCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "delete TOKEN...",
-		Short:        "Delete Feishu minutes",
+		Short:        "Delete Minutes from the current account",
 		Args:         validateDeleteArgs,
 		SilenceUsage: true,
 		Annotations: map[string]string{
 			requiresConfigAnnotation:       "true",
 			requiresConfirmationAnnotation: "true",
 		},
+		Long: `Delete Minutes from the current account.
+
+Tokens are removed from the authenticated account. By default, each Minute is
+moved to trash. Use --destroy to permanently delete a Minute after moving it to
+trash. The command always requires --yes to avoid accidental deletion.`,
+		Example: `  openminutes delete m_abc123 --yes
+  openminutes delete m_abc123 m_def456 --yes --destroy`,
 		RunE: runDeleteCommand,
 	}
-	cmd.Flags().Bool("yes", false, "confirm deletion")
-	cmd.Flags().Bool("destroy", false, "permanently delete minutes after moving them to trash")
+	cmd.Flags().Bool("yes", false, "confirm deletion without prompting")
+	cmd.Flags().Bool("destroy", false, "permanently delete each Minute after moving it to trash")
 
 	return cmd
 }

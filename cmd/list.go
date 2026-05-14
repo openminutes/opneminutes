@@ -18,6 +18,7 @@ import (
 
 type listMinutesClient interface {
 	ListMinutesPage(context.Context, minutes.ListOptions) (*minutes.ListMinutesPageResult, error)
+	ListMinutes(context.Context, minutes.ListOptions) ([]minutes.Minute, error)
 }
 
 var newListMinutesClient = func(config minutes.Config) (listMinutesClient, error) {
@@ -28,24 +29,29 @@ func newListCommand() *cobra.Command {
 	var size int
 	var timestamp int64
 	var jsonOutput bool
+	var all bool
 
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List Feishu minutes",
+		Short: "List Minutes from the current account",
 		Annotations: map[string]string{
 			requiresConfigAnnotation: "true",
 		},
-		Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
+		Long: `List Minutes from the current account.
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+By default, list requests one page and prints a Next page command when more
+results are available. Pass the printed timestamp with --timestamp to continue
+from the next page. Use --json for structured output. Use --all to follow
+pagination and list all Minutes, starting from --timestamp when provided.`,
+		Example: `  openminutes list
+  openminutes list --size 50 --timestamp 1710000000
+  openminutes list --all --json`,
 		RunE: runListCommand,
 	}
-	cmd.Flags().IntVar(&size, "size", 20, "number of minutes to request")
-	cmd.Flags().Int64Var(&timestamp, "timestamp", 0, "pagination timestamp")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output result as JSON")
+	cmd.Flags().IntVar(&size, "size", 20, "number of Minutes to request per page")
+	cmd.Flags().Int64Var(&timestamp, "timestamp", 0, "pagination timestamp to start from")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print structured JSON instead of plain rows")
+	cmd.Flags().BoolVar(&all, "all", false, "follow pagination and list all Minutes")
 
 	return cmd
 }
@@ -74,6 +80,10 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 	if timestamp < 0 {
 		return errors.New("timestamp must be greater than or equal to 0")
 	}
+	all, err := cmd.Flags().GetBool("all")
+	if err != nil {
+		return err
+	}
 
 	clientConfig := minutes.Config{
 		BaseURL:      config.BaseURL,
@@ -90,10 +100,11 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	result, err := client.ListMinutesPage(cmd.Context(), minutes.ListOptions{
+	options := minutes.ListOptions{
 		Size:      size,
 		Timestamp: timestamp,
-	})
+	}
+	result, err := listMinutes(cmd.Context(), client, options, all)
 	if err != nil {
 		logger.Debug("list minutes failed", zap.Error(err))
 		return err
@@ -139,6 +150,19 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 		zap.Int64("next_timestamp", result.NextTimestamp),
 	)
 	return nil
+}
+
+func listMinutes(ctx context.Context, client listMinutesClient, options minutes.ListOptions, all bool) (*minutes.ListMinutesPageResult, error) {
+	if !all {
+		return client.ListMinutesPage(ctx, options)
+	}
+
+	items, err := client.ListMinutes(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+
+	return &minutes.ListMinutesPageResult{Items: items}, nil
 }
 
 type listJSONOutput struct {

@@ -82,7 +82,6 @@ func newRootCommand() *cobra.Command {
 
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", defaultConfigFlagValue, "config file path")
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "enable verbose debug logging")
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 	rootCmd.AddCommand(newDeleteCommand())
 	rootCmd.AddCommand(newGetCommand())
 	rootCmd.AddCommand(newListCommand())

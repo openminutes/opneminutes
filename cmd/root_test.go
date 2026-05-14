@@ -53,6 +53,11 @@ func TestRootCommandHelp(t *testing.T) {
 			t.Fatalf("stdout = %q, want to contain %q", stdout, want)
 		}
 	}
+	for _, notWant := range []string{"--toggle", "Help message for toggle"} {
+		if strings.Contains(stdout, notWant) {
+			t.Fatalf("stdout = %q, want not to contain %q", stdout, notWant)
+		}
+	}
 }
 
 func TestRootCommandVerboseHelpDoesNotRequireConfig(t *testing.T) {

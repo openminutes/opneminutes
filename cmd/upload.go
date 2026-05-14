@@ -51,19 +51,19 @@ var newUploadMinutesClient = func(config minutes.Config) (uploadMinutesClient, e
 func newUploadCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:          "upload FILE",
-		Short:        "Upload a local media file to Feishu minutes",
+		Short:        "Upload media to Minutes for transcription",
 		Args:         validateUploadArgs,
 		SilenceUsage: true,
 		Annotations: map[string]string{
 			requiresConfigAnnotation: "true",
 		},
-		Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
+		Long: `Upload media to Minutes for transcription.
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
-		RunE: runUploadCommand,
+Upload one local audio or video file for Minutes transcription. The file
+extension, size, and duration are validated before upload. The result is a new
+Minute URL/token in the current account.`,
+		Example: `  openminutes upload ./meeting.mp4`,
+		RunE:    runUploadCommand,
 	}
 }
 

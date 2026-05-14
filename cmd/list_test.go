@@ -19,6 +19,36 @@ func (f listMinutesClientFunc) ListMinutesPage(ctx context.Context, options minu
 	return f(ctx, options)
 }
 
+func (f listMinutesClientFunc) ListMinutes(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
+	result, err := f(ctx, options)
+	if err != nil || result == nil {
+		return nil, err
+	}
+
+	return result.Items, nil
+}
+
+type listMinutesClientStub struct {
+	listPage func(context.Context, minutes.ListOptions) (*minutes.ListMinutesPageResult, error)
+	listAll  func(context.Context, minutes.ListOptions) ([]minutes.Minute, error)
+}
+
+func (s listMinutesClientStub) ListMinutesPage(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
+	if s.listPage == nil {
+		return nil, errors.New("ListMinutesPage() should not be called")
+	}
+
+	return s.listPage(ctx, options)
+}
+
+func (s listMinutesClientStub) ListMinutes(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
+	if s.listAll == nil {
+		return nil, errors.New("ListMinutes() should not be called")
+	}
+
+	return s.listAll(ctx, options)
+}
+
 func withListMinutesClient(t *testing.T, factory func(minutes.Config) (listMinutesClient, error)) {
 	t.Helper()
 
@@ -143,6 +173,125 @@ func TestListCommandPrintsMinutesInOrder(t *testing.T) {
 	}, "\n")
 	if stdout != want {
 		t.Fatalf("stdout = %q, want %q", stdout, want)
+	}
+}
+
+func TestListCommandAllPrintsAllMinutesWithoutNextPageFooter(t *testing.T) {
+	var gotOptions minutes.ListOptions
+	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
+		return listMinutesClientStub{
+			listAll: func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
+				gotOptions = options
+				return []minutes.Minute{
+					{ObjectToken: "token-1", Topic: "First", URL: "https://example.test/first"},
+					{ObjectToken: "token-2", Topic: "Second", URL: "https://example.test/second"},
+				}, nil
+			},
+		}, nil
+	})
+
+	stdout, err := executeListCommand(t, testCommandConfig(), "--all")
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	wantOptions := minutes.ListOptions{Size: 20}
+	if !reflect.DeepEqual(gotOptions, wantOptions) {
+		t.Fatalf("ListMinutes() options = %#v, want %#v", gotOptions, wantOptions)
+	}
+	want := strings.Join([]string{
+		"token-1 First https://example.test/first",
+		"token-2 Second https://example.test/second",
+		"",
+	}, "\n")
+	if stdout != want {
+		t.Fatalf("stdout = %q, want %q", stdout, want)
+	}
+	if strings.Contains(stdout, "Next page:") {
+		t.Fatalf("stdout = %q, want no next page footer", stdout)
+	}
+}
+
+func TestListCommandAllPassesCustomPaginationOptions(t *testing.T) {
+	var gotOptions minutes.ListOptions
+	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
+		return listMinutesClientStub{
+			listAll: func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
+				gotOptions = options
+				return nil, nil
+			},
+		}, nil
+	})
+
+	_, err := executeListCommand(t, testCommandConfig(), "--all", "--size", "50", "--timestamp", "100")
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	want := minutes.ListOptions{Size: 50, Timestamp: 100}
+	if !reflect.DeepEqual(gotOptions, want) {
+		t.Fatalf("ListMinutes() options = %#v, want %#v", gotOptions, want)
+	}
+}
+
+func TestListCommandAllPrintsJSONWithoutPaginationMetadata(t *testing.T) {
+	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
+		return listMinutesClientStub{
+			listAll: func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
+				return []minutes.Minute{
+					{
+						ObjectToken: "token-1",
+						Topic:       "First",
+						URL:         "https://example.test/first",
+						ShareTime:   200,
+					},
+					{
+						ObjectToken: "token-2",
+						Topic:       "Second",
+						URL:         "https://example.test/second",
+						ShareTime:   100,
+					},
+				}, nil
+			},
+		}, nil
+	})
+
+	stdout, err := executeListCommand(t, testCommandConfig(), "--all", "--json")
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	var got struct {
+		Items         []minutes.Minute `json:"items"`
+		HasMore       bool             `json:"has_more"`
+		NextTimestamp int64            `json:"next_timestamp"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v, stdout = %q", err, stdout)
+	}
+
+	wantItems := []minutes.Minute{
+		{
+			ObjectToken: "token-1",
+			Topic:       "First",
+			URL:         "https://example.test/first",
+			ShareTime:   200,
+		},
+		{
+			ObjectToken: "token-2",
+			Topic:       "Second",
+			URL:         "https://example.test/second",
+			ShareTime:   100,
+		},
+	}
+	if !reflect.DeepEqual(got.Items, wantItems) {
+		t.Fatalf("items = %#v, want %#v", got.Items, wantItems)
+	}
+	if got.HasMore {
+		t.Fatal("has_more = true, want false")
+	}
+	if got.NextTimestamp != 0 {
+		t.Fatalf("next_timestamp = %d, want 0", got.NextTimestamp)
 	}
 }
 
@@ -382,6 +531,22 @@ func TestListCommandReturnsListError(t *testing.T) {
 	}
 }
 
+func TestListCommandAllReturnsListError(t *testing.T) {
+	wantErr := errors.New("list all failed")
+	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
+		return listMinutesClientStub{
+			listAll: func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
+				return nil, wantErr
+			},
+		}, nil
+	})
+
+	_, err := executeListCommand(t, testCommandConfig(), "--all")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Execute() error = %v, want %v", err, wantErr)
+	}
+}
+
 func TestListCommandRejectsInvalidPaginationOptions(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -403,11 +568,23 @@ func TestListCommandRejectsInvalidPaginationOptions(t *testing.T) {
 			args:    []string{"--timestamp", "-1"},
 			wantErr: "timestamp must be greater than or equal to 0",
 		},
+		{
+			name:    "zero size with all",
+			args:    []string{"--all", "--size", "0"},
+			wantErr: "size must be greater than 0",
+		},
+		{
+			name:    "negative timestamp with all",
+			args:    []string{"--all", "--timestamp", "-1"},
+			wantErr: "timestamp must be greater than or equal to 0",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			clientCreated := false
 			withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
+				clientCreated = true
 				return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
 					return nil, fmt.Errorf("ListMinutesPage() should not be called")
 				}), nil
@@ -419,6 +596,9 @@ func TestListCommandRejectsInvalidPaginationOptions(t *testing.T) {
 			}
 			if err.Error() != tt.wantErr {
 				t.Fatalf("Execute() error = %q, want %q", err.Error(), tt.wantErr)
+			}
+			if clientCreated {
+				t.Fatal("client created for invalid pagination options")
 			}
 		})
 	}
