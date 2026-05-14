@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,7 +15,6 @@ import (
 	"openminutes/internal/minutes"
 
 	"github.com/spf13/cobra"
-	"github.com/tcolgate/mp3"
 	"go.uber.org/zap"
 )
 
@@ -231,7 +229,7 @@ func TestUploadCommandRejectsInvalidArgsBeforeClientCreation(t *testing.T) {
 	}
 }
 
-func TestUploadCommandRejectsInvalidFilesBeforeClientCreation(t *testing.T) {
+func TestUploadCommandRejectsInvalidFilesBeforeUploadAPI(t *testing.T) {
 	tempDir := t.TempDir()
 	missingPath := filepath.Join(tempDir, "missing.mp3")
 	directoryPath := filepath.Join(tempDir, "directory")
@@ -244,7 +242,7 @@ func TestUploadCommandRejectsInvalidFilesBeforeClientCreation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	if err := oversizedFile.Truncate(maxUploadFileSize + 1); err != nil {
+	if err := oversizedFile.Truncate(6*1024*1024*1024 + 1); err != nil {
 		_ = oversizedFile.Close()
 		t.Fatalf("Truncate() error = %v", err)
 	}
@@ -252,7 +250,7 @@ func TestUploadCommandRejectsInvalidFilesBeforeClientCreation(t *testing.T) {
 		t.Fatalf("Close() error = %v", err)
 	}
 	tooLongPath := filepath.Join(tempDir, "too-long.wav")
-	writeWAVHeader(t, tooLongPath, maxUploadDuration+time.Second)
+	writeWAVHeader(t, tooLongPath, 6*time.Hour+time.Second)
 
 	tests := []struct {
 		name    string
@@ -268,10 +266,12 @@ func TestUploadCommandRejectsInvalidFilesBeforeClientCreation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			clientCreated := false
+			uploadCalled := false
 			withUploadMinutesClient(t, func(minutes.Config) (uploadMinutesClient, error) {
-				clientCreated = true
-				return nil, errors.New("client should not be created")
+				return uploadMinutesClientFunc(func(context.Context, minutes.UploadOptions) (*minutes.UploadResult, error) {
+					uploadCalled = true
+					return nil, errors.New("upload should not be called")
+				}), nil
 			})
 
 			_, err := executeUploadCommand(t, testCommandConfig(), tt.path)
@@ -281,8 +281,8 @@ func TestUploadCommandRejectsInvalidFilesBeforeClientCreation(t *testing.T) {
 			if !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("Execute() error = %q, want to contain %q", err.Error(), tt.wantErr)
 			}
-			if clientCreated {
-				t.Fatal("client created for invalid file")
+			if uploadCalled {
+				t.Fatal("upload API called for invalid file")
 			}
 		})
 	}
@@ -303,25 +303,6 @@ func TestUploadCommandAllowsUnknownDuration(t *testing.T) {
 	wantStdout := "Uploaded object-1 https://meetings.feishu.cn/minutes/object-1\n"
 	if stdout != wantStdout {
 		t.Fatalf("stdout = %q, want %q", stdout, wantStdout)
-	}
-}
-
-func TestValidateUploadFileAcceptsKnownDuration(t *testing.T) {
-	filePath := filepath.Join(t.TempDir(), "short.wav")
-	writeWAVHeader(t, filePath, 3*time.Second)
-
-	if err := validateUploadFile(filePath, nil); err != nil {
-		t.Fatalf("validateUploadFile() error = %v, want nil", err)
-	}
-}
-
-func TestValidateUploadFileReturnsStatError(t *testing.T) {
-	err := validateUploadFile("bad\x00path.mp3", zap.NewNop())
-	if err == nil {
-		t.Fatal("validateUploadFile() error = nil, want stat error")
-	}
-	if !strings.Contains(err.Error(), "stat file") {
-		t.Fatalf("validateUploadFile() error = %q, want stat file", err.Error())
 	}
 }
 
@@ -374,247 +355,6 @@ func TestRunUploadCommandRejectsUnvalidatedArgs(t *testing.T) {
 	}
 }
 
-func TestProbeUploadDuration(t *testing.T) {
-	tempDir := t.TempDir()
-
-	t.Run("skipped extension", func(t *testing.T) {
-		duration, known, err := probeUploadDuration(filepath.Join(tempDir, "missing.aac"), ".aac")
-		if err != nil {
-			t.Fatalf("probeUploadDuration() error = %v, want nil", err)
-		}
-		if known || duration != 0 {
-			t.Fatalf("probeUploadDuration() = %v, %v, want unknown zero", duration, known)
-		}
-	})
-
-	t.Run("missing probed file", func(t *testing.T) {
-		_, known, err := probeUploadDuration(filepath.Join(tempDir, "missing.wav"), ".wav")
-		if err == nil {
-			t.Fatal("probeUploadDuration() error = nil, want error")
-		}
-		if known {
-			t.Fatal("probeUploadDuration() known = true, want false")
-		}
-	})
-
-	t.Run("wav", func(t *testing.T) {
-		filePath := filepath.Join(tempDir, "known.wav")
-		writeWAVHeader(t, filePath, 3*time.Second)
-		duration, known, err := probeUploadDuration(filePath, ".wav")
-		if err != nil {
-			t.Fatalf("probeUploadDuration() error = %v, want nil", err)
-		}
-		if !known || duration != 3*time.Second {
-			t.Fatalf("probeUploadDuration() = %v, %v, want 3s known", duration, known)
-		}
-	})
-
-	t.Run("mp4", func(t *testing.T) {
-		filePath := filepath.Join(tempDir, "known.mp4")
-		writeMP4WithMovieDuration(t, filePath, 1000, 2500)
-		duration, known, err := probeUploadDuration(filePath, ".mp4")
-		if err != nil {
-			t.Fatalf("probeUploadDuration() error = %v, want nil", err)
-		}
-		if !known || duration != 2500*time.Millisecond {
-			t.Fatalf("probeUploadDuration() = %v, %v, want 2.5s known", duration, known)
-		}
-	})
-
-	t.Run("mp4 decode error", func(t *testing.T) {
-		filePath := writeUploadFile(t, tempDir, "broken.mp4", []byte("not mp4"))
-		_, known, err := probeUploadDuration(filePath, ".mp4")
-		if err == nil {
-			t.Fatal("probeUploadDuration() error = nil, want error")
-		}
-		if known {
-			t.Fatal("probeUploadDuration() known = true, want false")
-		}
-	})
-
-	t.Run("mp4 unknown duration", func(t *testing.T) {
-		filePath := filepath.Join(tempDir, "unknown.mp4")
-		if err := os.WriteFile(filePath, mp4Box(t, "ftyp", []byte("isom\x00\x00\x00\x00isom")), 0o600); err != nil {
-			t.Fatalf("WriteFile() error = %v", err)
-		}
-		_, known, err := probeUploadDuration(filePath, ".mp4")
-		if !errors.Is(err, errUploadDurationUnknown) {
-			t.Fatalf("probeUploadDuration() error = %v, want unknown", err)
-		}
-		if known {
-			t.Fatal("probeUploadDuration() known = true, want false")
-		}
-	})
-
-	t.Run("mp3", func(t *testing.T) {
-		filePath := filepath.Join(tempDir, "known.mp3")
-		writeMP3SilentFrame(t, filePath)
-		duration, known, err := probeUploadDuration(filePath, ".mp3")
-		if err != nil {
-			t.Fatalf("probeUploadDuration() error = %v, want nil", err)
-		}
-		if !known || duration <= 0 {
-			t.Fatalf("probeUploadDuration() = %v, %v, want known positive duration", duration, known)
-		}
-	})
-
-	t.Run("mp3 decode error", func(t *testing.T) {
-		filePath := writeUploadFile(t, tempDir, "broken.mp3", []byte("not mp3"))
-		_, known, err := probeUploadDuration(filePath, ".mp3")
-		if err == nil {
-			t.Fatal("probeUploadDuration() error = nil, want error")
-		}
-		if known {
-			t.Fatal("probeUploadDuration() known = true, want false")
-		}
-	})
-}
-
-func TestProbeUploadDurationFileHandlesProbeResults(t *testing.T) {
-	filePath := writeUploadFile(t, t.TempDir(), "clip.aac", []byte("audio"))
-	wantErr := errors.New("probe failed")
-
-	t.Run("probe error", func(t *testing.T) {
-		_, known, err := probeUploadDurationFile(filePath, func(*os.File) (time.Duration, error) {
-			return 0, wantErr
-		})
-		if !errors.Is(err, wantErr) {
-			t.Fatalf("probeUploadDurationFile() error = %v, want %v", err, wantErr)
-		}
-		if known {
-			t.Fatal("probeUploadDurationFile() known = true, want false")
-		}
-	})
-
-	t.Run("zero duration", func(t *testing.T) {
-		_, known, err := probeUploadDurationFile(filePath, func(*os.File) (time.Duration, error) {
-			return 0, nil
-		})
-		if !errors.Is(err, errUploadDurationUnknown) {
-			t.Fatalf("probeUploadDurationFile() error = %v, want unknown", err)
-		}
-		if known {
-			t.Fatal("probeUploadDurationFile() known = true, want false")
-		}
-	})
-}
-
-func TestDurationProbeSeekErrors(t *testing.T) {
-	tests := []struct {
-		name  string
-		probe func(*os.File) (time.Duration, error)
-	}{
-		{name: "mp4", probe: probeMP4Duration},
-		{name: "wav", probe: probeWAVDuration},
-		{name: "mp3", probe: probeMP3Duration},
-		{name: "ogg", probe: probeOggVorbisDuration},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			filePath := writeUploadFile(t, t.TempDir(), "closed.bin", []byte("data"))
-			file, err := os.Open(filePath)
-			if err != nil {
-				t.Fatalf("Open() error = %v", err)
-			}
-			if err := file.Close(); err != nil {
-				t.Fatalf("Close() error = %v", err)
-			}
-
-			if _, err := tt.probe(file); err == nil {
-				t.Fatal("probe() error = nil, want closed file error")
-			}
-		})
-	}
-}
-
-func TestWAVDurationProbeRejectsInvalidHeader(t *testing.T) {
-	filePath := writeUploadFile(t, t.TempDir(), "broken.wav", []byte("not wav"))
-	file, err := os.Open(filePath)
-	if err != nil {
-		t.Fatalf("Open() error = %v", err)
-	}
-	defer file.Close()
-
-	if _, err := probeWAVDuration(file); err == nil {
-		t.Fatal("probeWAVDuration() error = nil, want error")
-	}
-}
-
-func TestWAVDurationProbeReturnsUnknownForInvalidMetadata(t *testing.T) {
-	filePath := filepath.Join(t.TempDir(), "invalid.wav")
-	writeCustomWAVHeader(t, filePath, 1, 16, 0)
-	file, err := os.Open(filePath)
-	if err != nil {
-		t.Fatalf("Open() error = %v", err)
-	}
-	defer file.Close()
-
-	if _, err := probeWAVDuration(file); !errors.Is(err, errUploadDurationUnknown) {
-		t.Fatalf("probeWAVDuration() error = %v, want unknown", err)
-	}
-}
-
-func TestDurationFromTimeUnits(t *testing.T) {
-	maxWholeSeconds := uint64(maxTimeDuration / time.Second)
-	tests := []struct {
-		name           string
-		units          uint64
-		unitsPerSecond uint64
-		want           time.Duration
-	}{
-		{name: "zero units", units: 0, unitsPerSecond: 1000, want: 0},
-		{name: "zero scale", units: 1000, unitsPerSecond: 0, want: 0},
-		{name: "fractional", units: 1500, unitsPerSecond: 1000, want: 1500 * time.Millisecond},
-		{name: "clamped", units: uint64(maxTimeDuration/time.Second) + 1, unitsPerSecond: 1, want: maxTimeDuration},
-		{name: "clamped nanoseconds", units: maxWholeSeconds*10 + 9, unitsPerSecond: 10, want: maxTimeDuration},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := durationFromTimeUnits(tt.units, tt.unitsPerSecond); got != tt.want {
-				t.Fatalf("durationFromTimeUnits() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestUploadMinutesURL(t *testing.T) {
-	tests := []struct {
-		name        string
-		baseURL     string
-		objectToken string
-		want        string
-	}{
-		{
-			name:        "custom trailing slash",
-			baseURL:     "https://meetings.example.test/",
-			objectToken: "object-1",
-			want:        "https://meetings.example.test/minutes/object-1",
-		},
-		{
-			name:        "default base url",
-			baseURL:     "",
-			objectToken: "object-1",
-			want:        "https://meetings.feishu.cn/minutes/object-1",
-		},
-		{
-			name:        "invalid base url falls back to default",
-			baseURL:     "://bad",
-			objectToken: "object-1",
-			want:        "https://meetings.feishu.cn/minutes/object-1",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := uploadMinutesURL(tt.baseURL, tt.objectToken); got != tt.want {
-				t.Fatalf("uploadMinutesURL() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func writeUploadFile(t *testing.T, dir, name string, content []byte) string {
 	t.Helper()
 
@@ -664,64 +404,6 @@ func writeCustomWAVHeader(t *testing.T, filePath string, numChannels uint16, bit
 
 	if err := os.WriteFile(filePath, buffer.Bytes(), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
-	}
-}
-
-func writeMP4WithMovieDuration(t *testing.T, filePath string, timescale uint32, duration uint32) {
-	t.Helper()
-
-	mvhdPayload := new(bytes.Buffer)
-	writeBinary(t, mvhdPayload, uint32(0))
-	writeBinary(t, mvhdPayload, uint32(0))
-	writeBinary(t, mvhdPayload, uint32(0))
-	writeBinary(t, mvhdPayload, timescale)
-	writeBinary(t, mvhdPayload, duration)
-	writeBinary(t, mvhdPayload, uint32(0x00010000))
-	writeBinary(t, mvhdPayload, uint16(0x0100))
-	writeBinary(t, mvhdPayload, uint16(0))
-	writeBinary(t, mvhdPayload, uint32(0))
-	writeBinary(t, mvhdPayload, uint32(0))
-	for _, value := range []uint32{0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000} {
-		writeBinary(t, mvhdPayload, value)
-	}
-	for i := 0; i < 6; i++ {
-		writeBinary(t, mvhdPayload, uint32(0))
-	}
-	writeBinary(t, mvhdPayload, uint32(1))
-
-	content := append(mp4Box(t, "ftyp", []byte("isom\x00\x00\x00\x00isom")), mp4Box(t, "moov", mp4Box(t, "mvhd", mvhdPayload.Bytes()))...)
-	if err := os.WriteFile(filePath, content, 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-}
-
-func mp4Box(t *testing.T, boxType string, payload []byte) []byte {
-	t.Helper()
-
-	buffer := new(bytes.Buffer)
-	writeBinary(t, buffer, uint32(8+len(payload)))
-	buffer.WriteString(boxType)
-	buffer.Write(payload)
-	return buffer.Bytes()
-}
-
-func writeMP3SilentFrame(t *testing.T, filePath string) {
-	t.Helper()
-
-	data, err := io.ReadAll(mp3.SilentFrame.Reader())
-	if err != nil {
-		t.Fatalf("ReadAll() error = %v", err)
-	}
-	if err := os.WriteFile(filePath, data, 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-}
-
-func writeBinary(t *testing.T, buffer *bytes.Buffer, value any) {
-	t.Helper()
-
-	if err := binary.Write(buffer, binary.BigEndian, value); err != nil {
-		t.Fatalf("binary.Write() error = %v", err)
 	}
 }
 

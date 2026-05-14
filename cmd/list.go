@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 
+	"openminutes/internal/logic"
 	"openminutes/internal/minutes"
 
 	"github.com/spf13/cobra"
@@ -95,7 +96,7 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 		Size:      size,
 		Timestamp: timestamp,
 	}
-	result, err := listMinutes(cmd.Context(), client, options, all)
+	result, err := logic.ListMinutes(cmd.Context(), client, options, all)
 	if err != nil {
 		logger.Debug("list minutes failed", zap.Error(err))
 		return err
@@ -129,7 +130,7 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	for _, item := range items {
-		if _, err := fmt.Fprintf(out, "%s %s %s\n", item.ObjectToken, listTopic(item.Topic), listURL(item, runtime.Config.BaseURL)); err != nil {
+		if _, err := fmt.Fprintf(out, "%s %s %s\n", item.ObjectToken, logic.MinuteTopic(item.Topic), listURL(item, runtime.Config.BaseURL)); err != nil {
 			return err
 		}
 	}
@@ -151,19 +152,6 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 		zap.Int64("next_timestamp", result.NextTimestamp),
 	)
 	return nil
-}
-
-func listMinutes(ctx context.Context, client listMinutesClient, options minutes.ListOptions, all bool) (*minutes.ListMinutesPageResult, error) {
-	if !all {
-		return client.ListMinutesPage(ctx, options)
-	}
-
-	items, err := client.ListMinutes(ctx, options)
-	if err != nil {
-		return nil, err
-	}
-
-	return &minutes.ListMinutesPageResult{Items: items}, nil
 }
 
 type listJSONOutput struct {
@@ -189,24 +177,11 @@ func writeListJSON(cmd *cobra.Command, result *minutes.ListMinutesPageResult) er
 	return encoder.Encode(output)
 }
 
-func listTopic(topic string) string {
-	topic = strings.TrimSpace(topic)
-	if topic == "" {
-		return "(untitled)"
-	}
-
-	return topic
-}
-
 func listURL(item minutes.Minute, baseURL string) string {
 	rawURL := strings.TrimSpace(item.URL)
 	if rawURL != "" {
 		return rawURL
 	}
 
-	baseURL, _, err := minutes.NormalizeBaseURLOrDefault("base_url", baseURL, defaultBaseURL)
-	if err != nil {
-		baseURL = defaultBaseURL
-	}
-	return baseURL + "/minutes/" + item.ObjectToken
+	return logic.MinuteURL(baseURL, item.ObjectToken)
 }

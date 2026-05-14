@@ -7,38 +7,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
-	"time"
 
+	"openminutes/internal/logic"
 	"openminutes/internal/minutes"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
-
-const (
-	maxUploadFileSize = 6 * 1024 * 1024 * 1024
-	maxUploadDuration = 6 * time.Hour
-)
-
-var supportedUploadExtensions = map[string]struct{}{
-	".wav":  {},
-	".mp3":  {},
-	".m4a":  {},
-	".aac":  {},
-	".ogg":  {},
-	".wma":  {},
-	".amr":  {},
-	".avi":  {},
-	".wmv":  {},
-	".mov":  {},
-	".mp4":  {},
-	".m4v":  {},
-	".mpeg": {},
-	".flv":  {},
-}
 
 type uploadMinutesClient interface {
 	UploadFile(context.Context, minutes.UploadOptions) (*minutes.UploadResult, error)
@@ -96,21 +72,13 @@ func runUploadCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	filePath := args[0]
-	if err := validateUploadFile(filePath, logger); err != nil {
-		logger.Debug("upload file validation failed",
-			zap.String("path", filePath),
-			zap.Error(err),
-		)
-		return err
-	}
-
 	client, err := newUploadMinutesClient(runtime.ClientConfig)
 	if err != nil {
 		logger.Debug("upload client initialization failed", zap.Error(err))
 		return err
 	}
 
-	result, err := client.UploadFile(cmd.Context(), minutes.UploadOptions{FilePath: filePath})
+	result, err := logic.UploadFile(cmd.Context(), client, filePath, logger)
 	if err != nil {
 		logger.Debug("upload file failed",
 			zap.String("path", filePath),
@@ -118,11 +86,7 @@ func runUploadCommand(cmd *cobra.Command, args []string) error {
 		)
 		return err
 	}
-	if result == nil {
-		return errors.New("upload result is empty")
-	}
-
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Uploaded %s %s\n", result.ObjectToken, uploadMinutesURL(runtime.Config.BaseURL, result.ObjectToken)); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Uploaded %s %s\n", result.ObjectToken, logic.MinuteURL(runtime.Config.BaseURL, result.ObjectToken)); err != nil {
 		return err
 	}
 
@@ -131,65 +95,4 @@ func runUploadCommand(cmd *cobra.Command, args []string) error {
 		zap.String("object_token", result.ObjectToken),
 	)
 	return nil
-}
-
-func validateUploadFile(filePath string, logger *zap.Logger) error {
-	if logger == nil {
-		logger = zap.NewNop()
-	}
-
-	info, err := os.Stat(filePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("file %q does not exist", filePath)
-		}
-		return fmt.Errorf("stat file %q: %w", filePath, err)
-	}
-	if info.IsDir() {
-		return fmt.Errorf("file %q is a directory", filePath)
-	}
-
-	extension := strings.ToLower(filepath.Ext(filePath))
-	if _, ok := supportedUploadExtensions[extension]; !ok {
-		return fmt.Errorf("unsupported file extension %q", extension)
-	}
-
-	if info.Size() > maxUploadFileSize {
-		return fmt.Errorf("file size %d exceeds maximum %d bytes", info.Size(), int64(maxUploadFileSize))
-	}
-
-	duration, known, err := probeUploadDuration(filePath, extension)
-	if err != nil {
-		logger.Debug("upload duration probe failed",
-			zap.String("path", filePath),
-			zap.String("extension", extension),
-			zap.Error(err),
-		)
-		return nil
-	}
-	if !known {
-		logger.Debug("upload duration probe skipped",
-			zap.String("path", filePath),
-			zap.String("extension", extension),
-		)
-		return nil
-	}
-	if duration > maxUploadDuration {
-		return fmt.Errorf("file duration %s exceeds maximum %s", duration, maxUploadDuration)
-	}
-
-	logger.Debug("upload duration probe completed",
-		zap.String("path", filePath),
-		zap.String("extension", extension),
-		zap.Duration("duration", duration),
-	)
-	return nil
-}
-
-func uploadMinutesURL(baseURL, objectToken string) string {
-	baseURL, _, err := minutes.NormalizeBaseURLOrDefault("base_url", baseURL, defaultBaseURL)
-	if err != nil {
-		baseURL = defaultBaseURL
-	}
-	return baseURL + "/minutes/" + objectToken
 }

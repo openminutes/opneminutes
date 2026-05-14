@@ -3,250 +3,18 @@ package cmd
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"openminutes/internal/config"
 )
 
-func TestLoadConfigCreatesMissingDefaultConfig(t *testing.T) {
-	withoutOpenMinutesEnv(t)
+type Config = config.Config
 
-	configPath := filepath.Join(t.TempDir(), "openminutes", "config.toml")
-	withDefaultConfigPath(t, configPath)
-
-	config, err := loadConfig("")
-	if err == nil {
-		t.Fatal("loadConfig() error = nil, want error")
-	}
-
-	if !strings.Contains(err.Error(), "cookie is required") {
-		t.Fatalf("loadConfig() error = %v, want cookie required", err)
-	}
-
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-
-	if string(data) != configTemplate {
-		t.Fatalf("config file = %q, want %q", data, configTemplate)
-	}
-
-	if config != (Config{}) {
-		t.Fatalf("config = %#v, want zero value", config)
-	}
-}
-
-func TestLoadConfigCreatesMissingManualConfig(t *testing.T) {
-	withoutOpenMinutesEnv(t)
-
-	configPath := filepath.Join(t.TempDir(), "custom", "settings.toml")
-
-	_, err := loadConfig(configPath)
-	if err == nil {
-		t.Fatal("loadConfig() error = nil, want error")
-	}
-
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-
-	if string(data) != configTemplate {
-		t.Fatalf("config file = %q, want %q", data, configTemplate)
-	}
-}
-
-func TestLoadConfigReadsFileValues(t *testing.T) {
-	withoutOpenMinutesEnv(t)
-
-	configPath := writeConfig(t, `base_url = "https://meetings.example.test/"
-space_base_url = "https://space.example.test/"
-cookie = "session=abc"
-`)
-
-	config, err := loadConfig(configPath)
-	if err != nil {
-		t.Fatalf("loadConfig() error = %v, want nil", err)
-	}
-
-	want := Config{
-		BaseURL:      "https://meetings.example.test",
-		SpaceBaseURL: "https://space.example.test",
-		Cookie:       "session=abc",
-	}
-	if config != want {
-		t.Fatalf("config = %#v, want %#v", config, want)
-	}
-}
-
-func TestLoadConfigEnvOverridesFileValues(t *testing.T) {
-	withoutOpenMinutesEnv(t)
-
-	configPath := writeConfig(t, `base_url = "https://file.example.test"
-space_base_url = "https://file-space.example.test"
-cookie = "session=file"
-`)
-	t.Setenv("OPENMINUTES_BASE_URL", "https://env.example.test")
-	t.Setenv("OPENMINUTES_SPACE_BASE_URL", "https://env-space.example.test")
-	t.Setenv("OPENMINUTES_COOKIE", "session=env")
-
-	config, err := loadConfig(configPath)
-	if err != nil {
-		t.Fatalf("loadConfig() error = %v, want nil", err)
-	}
-
-	want := Config{
-		BaseURL:      "https://env.example.test",
-		SpaceBaseURL: "https://env-space.example.test",
-		Cookie:       "session=env",
-	}
-	if config != want {
-		t.Fatalf("config = %#v, want %#v", config, want)
-	}
-}
-
-func TestLoadConfigEmptyURLEnvUsesDefaults(t *testing.T) {
-	withoutOpenMinutesEnv(t)
-
-	configPath := writeConfig(t, `base_url = "https://file.example.test"
-space_base_url = "https://file-space.example.test"
-cookie = "session=file"
-`)
-	t.Setenv("OPENMINUTES_BASE_URL", "")
-	t.Setenv("OPENMINUTES_SPACE_BASE_URL", "")
-
-	config, err := loadConfig(configPath)
-	if err != nil {
-		t.Fatalf("loadConfig() error = %v, want nil", err)
-	}
-
-	want := Config{BaseURL: defaultBaseURL, SpaceBaseURL: defaultSpaceBaseURL, Cookie: "session=file"}
-	if config != want {
-		t.Fatalf("config = %#v, want %#v", config, want)
-	}
-}
-
-func TestLoadConfigEmptyCookieEnvRejectsCookie(t *testing.T) {
-	withoutOpenMinutesEnv(t)
-
-	configPath := writeConfig(t, `base_url = "https://file.example.test"
-space_base_url = "https://file-space.example.test"
-cookie = "session=file"
-`)
-	t.Setenv("OPENMINUTES_BASE_URL", "")
-	t.Setenv("OPENMINUTES_SPACE_BASE_URL", "")
-	t.Setenv("OPENMINUTES_COOKIE", "")
-
-	_, err := loadConfig(configPath)
-	if err == nil {
-		t.Fatal("loadConfig() error = nil, want error")
-	}
-
-	if err.Error() != "cookie is required" {
-		t.Fatalf("loadConfig() error = %q, want cookie is required", err.Error())
-	}
-}
-
-func TestLoadConfigRejectsInvalidURLs(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		want    string
-	}{
-		{
-			name: "base url missing scheme",
-			content: `base_url = "meetings.example.test"
-space_base_url = "https://space.example.test"
-cookie = "session=abc"
-`,
-			want: `invalid base_url "meetings.example.test": must be an absolute http or https URL with a host`,
-		},
-		{
-			name: "base url unsupported scheme",
-			content: `base_url = "ftp://meetings.example.test"
-space_base_url = "https://space.example.test"
-cookie = "session=abc"
-`,
-			want: `invalid base_url "ftp://meetings.example.test": must be an absolute http or https URL with a host`,
-		},
-		{
-			name: "space base url missing host",
-			content: `base_url = "https://meetings.example.test"
-space_base_url = "https://"
-cookie = "session=abc"
-`,
-			want: `invalid space_base_url "https://": must be an absolute http or https URL with a host`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			withoutOpenMinutesEnv(t)
-			configPath := writeConfig(t, tt.content)
-			_, err := loadConfig(configPath)
-			if err == nil {
-				t.Fatal("loadConfig() error = nil, want error")
-			}
-			if err.Error() != tt.want {
-				t.Fatalf("loadConfig() error = %q, want %q", err.Error(), tt.want)
-			}
-		})
-	}
-}
-
-func TestLoadConfigRejectsEmptyCookie(t *testing.T) {
-	withoutOpenMinutesEnv(t)
-
-	configPath := writeConfig(t, `base_url = "https://meetings.example.test"
-space_base_url = "https://space.example.test"
-cookie = ""
-`)
-
-	_, err := loadConfig(configPath)
-	if err == nil {
-		t.Fatal("loadConfig() error = nil, want error")
-	}
-
-	if err.Error() != "cookie is required" {
-		t.Fatalf("loadConfig() error = %q, want cookie is required", err.Error())
-	}
-}
-
-func TestLoadConfigDefaultsMissingURLs(t *testing.T) {
-	withoutOpenMinutesEnv(t)
-
-	configPath := writeConfig(t, `cookie = "session=abc"
-`)
-
-	config, err := loadConfig(configPath)
-	if err != nil {
-		t.Fatalf("loadConfig() error = %v, want nil", err)
-	}
-
-	want := Config{BaseURL: defaultBaseURL, SpaceBaseURL: defaultSpaceBaseURL, Cookie: "session=abc"}
-	if config != want {
-		t.Fatalf("config = %#v, want %#v", config, want)
-	}
-}
-
-func TestLoadConfigIgnoresRegionFileAndEnv(t *testing.T) {
-	withoutOpenMinutesEnv(t)
-	t.Setenv("OPENMINUTES_REGION", "larksuite")
-
-	configPath := writeConfig(t, `region = "invalid"
-cookie = "session=abc"
-`)
-
-	config, err := loadConfig(configPath)
-	if err != nil {
-		t.Fatalf("loadConfig() error = %v, want nil", err)
-	}
-
-	want := Config{BaseURL: defaultBaseURL, SpaceBaseURL: defaultSpaceBaseURL, Cookie: "session=abc"}
-	if config != want {
-		t.Fatalf("config = %#v, want %#v", config, want)
-	}
-}
+const (
+	defaultBaseURL      = config.DefaultBaseURL
+	defaultSpaceBaseURL = config.DefaultSpaceBaseURL
+	configTemplate      = config.Template
+)
 
 func withoutOpenMinutesEnv(t *testing.T) {
 	t.Helper()
@@ -296,20 +64,15 @@ func withoutOpenMinutesEnv(t *testing.T) {
 	})
 }
 
-func testCommandConfig() Config {
-	return Config{BaseURL: defaultBaseURL, SpaceBaseURL: defaultSpaceBaseURL, Cookie: "session=abc"}
+func testCommandConfig() config.Config {
+	return config.Config{BaseURL: config.DefaultBaseURL, SpaceBaseURL: config.DefaultSpaceBaseURL, Cookie: "session=abc"}
 }
 
 func withDefaultConfigPath(t *testing.T, configPath string) {
 	t.Helper()
 
-	oldDefaultConfigPathFunc := defaultConfigPathFunc
-	defaultConfigPathFunc = func() string {
-		return configPath
-	}
-	t.Cleanup(func() {
-		defaultConfigPathFunc = oldDefaultConfigPathFunc
-	})
+	root := filepath.Dir(filepath.Dir(configPath))
+	t.Setenv("XDG_CONFIG_HOME", root)
 }
 
 func writeConfig(t *testing.T, content string) string {

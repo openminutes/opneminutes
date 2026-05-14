@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 
+	"openminutes/internal/config"
 	"openminutes/internal/minutes"
 
 	"github.com/spf13/cobra"
@@ -10,7 +11,7 @@ import (
 )
 
 type commandRuntime struct {
-	Config       Config
+	Config       config.Config
 	Logger       *zap.Logger
 	ClientConfig minutes.Config
 }

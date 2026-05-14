@@ -6,6 +6,8 @@ package cmd
 import (
 	"os"
 
+	"openminutes/internal/config"
+
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -13,7 +15,7 @@ import (
 var exit = os.Exit
 
 func newRootCommand() *cobra.Command {
-	configPath := defaultConfigFlagValue
+	configPath := config.DefaultPathFlagValue
 	verbose := false
 
 	rootCmd := &cobra.Command{
@@ -64,7 +66,7 @@ func newRootCommand() *cobra.Command {
 				zap.String("path_source", configPathSource),
 				zap.Bool("flag_changed", configFlag != nil && configFlag.Changed),
 			)
-			config, err := loadConfigWithLogger(configPathForLoad, logger)
+			config, err := config.Load(configPathForLoad, logger)
 			if err != nil {
 				logger.Debug("config load failed", zap.Error(err))
 				return err
@@ -80,7 +82,7 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 
-	rootCmd.PersistentFlags().StringVar(&configPath, "config", defaultConfigFlagValue, "config file path")
+	rootCmd.PersistentFlags().StringVar(&configPath, "config", config.DefaultPathFlagValue, "config file path")
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "enable verbose debug logging")
 	rootCmd.AddCommand(newDeleteCommand())
 	rootCmd.AddCommand(newGetCommand())

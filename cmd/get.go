@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"openminutes/internal/logic"
 	"openminutes/internal/minutes"
 
 	"github.com/spf13/cobra"
@@ -134,7 +135,7 @@ func runGetCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	data, err := client.ExportSubtitle(cmd.Context(), token, minutes.SubtitleOptions{
+	data, err := logic.ExportSubtitle(cmd.Context(), client, token, minutes.SubtitleOptions{
 		Format:       fileType,
 		AddSpeaker:   speaker,
 		AddTimestamp: timestamp,

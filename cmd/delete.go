@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"openminutes/internal/logic"
 	"openminutes/internal/minutes"
 
 	"github.com/spf13/cobra"
@@ -92,24 +93,17 @@ func runDeleteCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	options := minutes.DeleteOptions{Destroy: destroy}
-	for _, token := range args {
-		token = strings.TrimSpace(token)
-		if err := client.DeleteMinute(cmd.Context(), token, options); err != nil {
-			logger.Debug("delete minute failed",
-				zap.String("object_token", token),
-				zap.Error(err),
-			)
-			return err
-		}
-		if destroy {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Permanently deleted %s\n", token); err != nil {
-				return err
-			}
-			continue
-		}
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Moved %s to trash\n", token); err != nil {
-			return err
-		}
+	clientWithOutput := &deleteOutputClient{
+		client:  client,
+		destroy: destroy,
+		out:     cmd.OutOrStdout(),
+	}
+	if err := logic.DeleteMinutes(cmd.Context(), clientWithOutput, args, options); err != nil {
+		logger.Debug("delete minute failed",
+			zap.String("object_token", clientWithOutput.currentToken),
+			zap.Error(err),
+		)
+		return err
 	}
 
 	logger.Debug("delete command completed",
@@ -117,4 +111,28 @@ func runDeleteCommand(cmd *cobra.Command, args []string) error {
 		zap.Bool("destroy", destroy),
 	)
 	return nil
+}
+
+type deleteOutputClient struct {
+	client  deleteMinutesClient
+	destroy bool
+	out     interface {
+		Write([]byte) (int, error)
+	}
+	currentToken string
+}
+
+func (c *deleteOutputClient) DeleteMinute(ctx context.Context, token string, options minutes.DeleteOptions) error {
+	c.currentToken = token
+	if err := c.client.DeleteMinute(ctx, token, options); err != nil {
+		return err
+	}
+
+	if c.destroy {
+		_, err := fmt.Fprintf(c.out, "Permanently deleted %s\n", token)
+		return err
+	}
+
+	_, err := fmt.Fprintf(c.out, "Moved %s to trash\n", token)
+	return err
 }
