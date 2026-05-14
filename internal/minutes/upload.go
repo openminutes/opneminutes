@@ -22,6 +22,8 @@ import (
 
 const fileHeaderSize = 512
 
+var jsonMarshal = json.Marshal
+
 // UploadFile uploads a local media file to Feishu Minutes.
 func (c *Client) UploadFile(ctx context.Context, options UploadOptions) (*UploadResult, error) {
 	upload, err := newUploadSource(options)
@@ -282,7 +284,7 @@ func (c *Client) prepareUpload(ctx context.Context, payload prepareUploadRequest
 		zap.Bool("drive_upload", payload.DriveUpload),
 		zap.Bool("upload_token_present", payload.UploadToken != ""),
 	)
-	body, err := json.Marshal(payload)
+	body, err := jsonMarshal(payload)
 	if err != nil {
 		c.logger.Debug("upload prepare payload marshal failed",
 			zap.String("name", payload.Name),
@@ -328,7 +330,7 @@ func (c *Client) getNeededUploadBlocks(ctx context.Context, uploadID string, blo
 		Blocks:   blocks,
 		Language: language,
 	}
-	body, err := json.Marshal(payload)
+	body, err := jsonMarshal(payload)
 	if err != nil {
 		c.logger.Debug("upload blocks payload marshal failed",
 			zap.String("upload_id", uploadID),
@@ -408,7 +410,7 @@ func (c *Client) finishSpaceUpload(ctx context.Context, payload finishSpaceUploa
 		zap.Int("num_blocks", payload.NumBlocks),
 		zap.String("vhid", payload.VHID),
 	)
-	body, err := json.Marshal(payload)
+	body, err := jsonMarshal(payload)
 	if err != nil {
 		c.logger.Debug("upload space finish payload marshal failed",
 			zap.String("upload_id", payload.UploadID),
@@ -447,7 +449,7 @@ func (c *Client) finishMinutesUpload(ctx context.Context, payload finishMinutesU
 		zap.Bool("upload_token_present", payload.UploadToken != ""),
 		zap.Bool("auto_transcribe", payload.AutoTranscribe),
 	)
-	body, err := json.Marshal(payload)
+	body, err := jsonMarshal(payload)
 	if err != nil {
 		c.logger.Debug("upload minutes finish payload marshal failed",
 			zap.String("upload_id", payload.UploadID),

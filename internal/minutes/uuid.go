@@ -5,9 +5,11 @@ import (
 	"fmt"
 )
 
+var randRead = rand.Read
+
 func newFileID() string {
 	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	if _, err := randRead(b[:]); err != nil {
 		return fallbackFileID()
 	}
 

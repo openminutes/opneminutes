@@ -79,8 +79,9 @@ func runDeleteCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	clientConfig := minutes.Config{
-		Region: config.Region,
-		Cookie: config.Cookie,
+		BaseURL:      config.BaseURL,
+		SpaceBaseURL: config.SpaceBaseURL,
+		Cookie:       config.Cookie,
 	}
 	if logger, ok := loggerFromContext(cmd.Context()); ok {
 		clientConfig.Logger = logger

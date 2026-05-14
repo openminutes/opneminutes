@@ -17,7 +17,6 @@ import (
 )
 
 const (
-	defaultRegion       = "feishu"
 	defaultBaseURL      = "https://meetings.feishu.cn"
 	defaultSpaceBaseURL = "https://internal-api-space.feishu.cn"
 	defaultUserAgent    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
@@ -31,25 +30,10 @@ func NewClient(config Config) (*Client, error) {
 		logger = zap.NewNop()
 	}
 
-	region := strings.TrimSpace(config.Region)
-	regionDefaulted := region == ""
-	if region == "" {
-		region = defaultRegion
-	}
-	if region != "feishu" && region != "larksuite" {
-		err := fmt.Errorf("invalid region %q: must be one of feishu, larksuite", region)
-		logger.Debug("client initialization failed",
-			zap.String("region", region),
-			zap.Error(err),
-		)
-		return nil, err
-	}
-
 	cookie := strings.TrimSpace(config.Cookie)
 	if cookie == "" {
 		err := errors.New("cookie is required")
 		logger.Debug("client initialization failed",
-			zap.String("region", region),
 			zap.Bool("cookie_present", false),
 			zap.Error(err),
 		)
@@ -59,7 +43,6 @@ func NewClient(config Config) (*Client, error) {
 	csrfToken, err := csrfTokenFromCookie(cookie)
 	if err != nil {
 		logger.Debug("client initialization failed",
-			zap.String("region", region),
 			zap.Bool("cookie_present", true),
 			zap.Bool("csrf_token_present", false),
 			zap.Error(err),
@@ -72,26 +55,34 @@ func NewClient(config Config) (*Client, error) {
 		httpClient = http.DefaultClient
 	}
 
-	baseURL := strings.TrimRight(strings.TrimSpace(config.BaseURL), "/")
+	baseURL := strings.TrimSpace(config.BaseURL)
 	baseURLDefaulted := baseURL == ""
 	if baseURL == "" {
-		var ok bool
-		baseURL, ok = defaultBaseURLForRegion(region)
-		if !ok {
-			err := fmt.Errorf("base URL is required for region %q", region)
-			logger.Debug("client initialization failed",
-				zap.String("region", region),
-				zap.Bool("base_url_defaulted", baseURLDefaulted),
-				zap.Error(err),
-			)
-			return nil, err
-		}
+		baseURL = defaultBaseURL
+	}
+	baseURL, err = normalizeClientBaseURL("base_url", baseURL)
+	if err != nil {
+		logger.Debug("client initialization failed",
+			zap.String("base_url", baseURL),
+			zap.Bool("base_url_defaulted", baseURLDefaulted),
+			zap.Error(err),
+		)
+		return nil, err
 	}
 
-	spaceBaseURL := strings.TrimRight(strings.TrimSpace(config.SpaceBaseURL), "/")
+	spaceBaseURL := strings.TrimSpace(config.SpaceBaseURL)
 	spaceBaseURLDefaulted := spaceBaseURL == ""
 	if spaceBaseURL == "" {
 		spaceBaseURL = defaultSpaceBaseURL
+	}
+	spaceBaseURL, err = normalizeClientBaseURL("space_base_url", spaceBaseURL)
+	if err != nil {
+		logger.Debug("client initialization failed",
+			zap.String("space_base_url", spaceBaseURL),
+			zap.Bool("space_base_url_defaulted", spaceBaseURLDefaulted),
+			zap.Error(err),
+		)
+		return nil, err
 	}
 
 	userAgent := strings.TrimSpace(config.UserAgent)
@@ -101,8 +92,6 @@ func NewClient(config Config) (*Client, error) {
 	}
 
 	logger.Debug("client initialized",
-		zap.String("region", region),
-		zap.Bool("region_defaulted", regionDefaulted),
 		zap.String("base_url", baseURL),
 		zap.Bool("base_url_defaulted", baseURLDefaulted),
 		zap.String("space_base_url", spaceBaseURL),
@@ -123,13 +112,29 @@ func NewClient(config Config) (*Client, error) {
 	}, nil
 }
 
-func defaultBaseURLForRegion(region string) (string, bool) {
-	switch region {
-	case "feishu":
-		return defaultBaseURL, true
-	default:
-		return "", false
+func normalizeClientBaseURL(fieldName, rawURL string) (string, error) {
+	rawURL = strings.TrimSpace(rawURL)
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", invalidClientBaseURLError(fieldName, rawURL)
 	}
+
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+	default:
+		return "", invalidClientBaseURLError(fieldName, rawURL)
+	}
+
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", invalidClientBaseURLError(fieldName, rawURL)
+	}
+
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	return parsed.String(), nil
+}
+
+func invalidClientBaseURLError(fieldName, rawURL string) error {
+	return fmt.Errorf("invalid %s %q: must be an absolute http or https URL with a host", fieldName, rawURL)
 }
 
 func csrfTokenFromCookie(cookie string) (string, error) {

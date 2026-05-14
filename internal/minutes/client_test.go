@@ -17,7 +17,6 @@ const testCookie = "session=abc; bv_csrf_token=csrf-token; other=value"
 
 func TestNewClientExtractsCSRFToken(t *testing.T) {
 	client, err := NewClient(Config{
-		Region:    "feishu",
 		Cookie:    "session=abc; bv_csrf_token=csrf-token; other=value",
 		BaseURL:   "https://example.test",
 		UserAgent: "test-agent",
@@ -36,7 +35,6 @@ func TestNewClientExtractsCSRFToken(t *testing.T) {
 
 func TestNewClientRejectsMissingCSRFToken(t *testing.T) {
 	_, err := NewClient(Config{
-		Region: "feishu",
 		Cookie: "session=abc",
 	})
 	if err == nil {
@@ -48,27 +46,33 @@ func TestNewClientRejectsMissingCSRFToken(t *testing.T) {
 	}
 }
 
-func TestNewClientRequiresBaseURLForLarkSuite(t *testing.T) {
-	_, err := NewClient(Config{
-		Region: "larksuite",
-		Cookie: testCookie,
-	})
-	if err == nil {
-		t.Fatal("NewClient() error = nil, want error")
+func TestNewClientDefaultsBaseURLs(t *testing.T) {
+	client, err := NewClient(Config{Cookie: testCookie})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v, want nil", err)
 	}
-	if err.Error() != `base URL is required for region "larksuite"` {
-		t.Fatalf("NewClient() error = %q, want larksuite base URL requirement", err.Error())
+	if client.baseURL != defaultBaseURL {
+		t.Fatalf("baseURL = %q, want %q", client.baseURL, defaultBaseURL)
+	}
+	if client.spaceBaseURL != defaultSpaceBaseURL {
+		t.Fatalf("spaceBaseURL = %q, want %q", client.spaceBaseURL, defaultSpaceBaseURL)
 	}
 }
 
-func TestNewClientAcceptsLarkSuiteWithBaseURL(t *testing.T) {
-	_, err := NewClient(Config{
-		Region:  "larksuite",
-		Cookie:  testCookie,
-		BaseURL: "https://example.larksuite.test",
+func TestNewClientPreservesCustomBaseURLs(t *testing.T) {
+	client, err := NewClient(Config{
+		Cookie:       testCookie,
+		BaseURL:      "https://example.test/root/",
+		SpaceBaseURL: "https://space.example.test/root/",
 	})
 	if err != nil {
 		t.Fatalf("NewClient() error = %v, want nil", err)
+	}
+	if client.baseURL != "https://example.test/root" {
+		t.Fatalf("baseURL = %q, want custom base URL", client.baseURL)
+	}
+	if client.spaceBaseURL != "https://space.example.test/root" {
+		t.Fatalf("spaceBaseURL = %q, want custom space base URL", client.spaceBaseURL)
 	}
 }
 
@@ -130,7 +134,6 @@ func TestClientReturnsServerCodeError(t *testing.T) {
 
 func TestNewClientDefaultsToNoopLogger(t *testing.T) {
 	client, err := NewClient(Config{
-		Region:  "feishu",
 		Cookie:  testCookie,
 		BaseURL: "https://example.test",
 	})
@@ -337,7 +340,6 @@ func newObservedTestClient(t *testing.T, baseURL, spaceBaseURL string, logger *z
 	t.Helper()
 
 	client, err := NewClient(Config{
-		Region:       "feishu",
 		Cookie:       testCookie,
 		BaseURL:      baseURL,
 		SpaceBaseURL: spaceBaseURL,

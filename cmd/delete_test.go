@@ -42,8 +42,9 @@ func executeDeleteCommand(t *testing.T, config Config, args ...string) (string, 
 
 func TestDeleteCommandReadsConfigAndCallsDeleteAPI(t *testing.T) {
 	wantConfig := minutes.Config{
-		Region: "feishu",
-		Cookie: "session=abc",
+		BaseURL:      "https://meetings.example.test",
+		SpaceBaseURL: "https://space.example.test",
+		Cookie:       "session=abc",
 	}
 	ctxKey := struct{}{}
 	ctx := context.WithValue(context.Background(), ctxKey, "marker")
@@ -69,8 +70,9 @@ func TestDeleteCommandReadsConfigAndCallsDeleteAPI(t *testing.T) {
 	cmd.SetOut(stdout)
 	cmd.SetArgs([]string{"token-1", "--yes"})
 	cmd.SetContext(contextWithConfig(ctx, Config{
-		Region: wantConfig.Region,
-		Cookie: wantConfig.Cookie,
+		BaseURL:      wantConfig.BaseURL,
+		SpaceBaseURL: wantConfig.SpaceBaseURL,
+		Cookie:       wantConfig.Cookie,
 	}))
 
 	if err := cmd.Execute(); err != nil {
@@ -106,7 +108,7 @@ func TestDeleteCommandPassesDestroyOption(t *testing.T) {
 		}), nil
 	})
 
-	stdout, err := executeDeleteCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, "token-1", "--yes", "--destroy")
+	stdout, err := executeDeleteCommand(t, testCommandConfig(), "token-1", "--yes", "--destroy")
 	if err != nil {
 		t.Fatalf("Execute() error = %v, want nil", err)
 	}
@@ -128,7 +130,7 @@ func TestDeleteCommandDeletesMultipleTokensInOrder(t *testing.T) {
 		}), nil
 	})
 
-	stdout, err := executeDeleteCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, "token-1", "token-2", "--yes")
+	stdout, err := executeDeleteCommand(t, testCommandConfig(), "token-1", "token-2", "--yes")
 	if err != nil {
 		t.Fatalf("Execute() error = %v, want nil", err)
 	}
@@ -155,7 +157,7 @@ func TestDeleteCommandStopsOnFirstFailure(t *testing.T) {
 		}), nil
 	})
 
-	stdout, err := executeDeleteCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, "token-1", "token-2", "token-3", "--yes")
+	stdout, err := executeDeleteCommand(t, testCommandConfig(), "token-1", "token-2", "token-3", "--yes")
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Execute() error = %v, want %v", err, wantErr)
 	}
@@ -176,7 +178,7 @@ func TestDeleteCommandRequiresConfirmationBeforeClient(t *testing.T) {
 		}), nil
 	})
 
-	_, err := executeDeleteCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, "token-1")
+	_, err := executeDeleteCommand(t, testCommandConfig(), "token-1")
 	if err == nil {
 		t.Fatal("Execute() error = nil, want error")
 	}
@@ -195,7 +197,7 @@ func TestDeleteCommandRejectsMissingToken(t *testing.T) {
 		return nil, errors.New("client should not be created")
 	})
 
-	_, err := executeDeleteCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, "--yes")
+	_, err := executeDeleteCommand(t, testCommandConfig(), "--yes")
 	if err == nil {
 		t.Fatal("Execute() error = nil, want error")
 	}
@@ -208,7 +210,7 @@ func TestDeleteCommandRejectsMissingToken(t *testing.T) {
 }
 
 func TestDeleteCommandRejectsEmptyToken(t *testing.T) {
-	_, err := executeDeleteCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, " ", "--yes")
+	_, err := executeDeleteCommand(t, testCommandConfig(), " ", "--yes")
 	if err == nil {
 		t.Fatal("Execute() error = nil, want error")
 	}
@@ -237,7 +239,7 @@ func TestDeleteCommandReturnsClientError(t *testing.T) {
 		return nil, wantErr
 	})
 
-	_, err := executeDeleteCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, "token-1", "--yes")
+	_, err := executeDeleteCommand(t, testCommandConfig(), "token-1", "--yes")
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Execute() error = %v, want %v", err, wantErr)
 	}

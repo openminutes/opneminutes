@@ -44,8 +44,9 @@ func executeListCommand(t *testing.T, config Config, args ...string) (string, er
 
 func TestListCommandReadsConfigAndCallsListAPI(t *testing.T) {
 	wantConfig := minutes.Config{
-		Region: "feishu",
-		Cookie: "session=abc",
+		BaseURL:      "https://meetings.example.test",
+		SpaceBaseURL: "https://space.example.test",
+		Cookie:       "session=abc",
 	}
 	ctxKey := struct{}{}
 	ctx := context.WithValue(context.Background(), ctxKey, "marker")
@@ -75,8 +76,9 @@ func TestListCommandReadsConfigAndCallsListAPI(t *testing.T) {
 	cmd.SetOut(stdout)
 	cmd.SetArgs([]string{})
 	cmd.SetContext(contextWithConfig(ctx, Config{
-		Region: wantConfig.Region,
-		Cookie: wantConfig.Cookie,
+		BaseURL:      wantConfig.BaseURL,
+		SpaceBaseURL: wantConfig.SpaceBaseURL,
+		Cookie:       wantConfig.Cookie,
 	}))
 
 	if err := cmd.Execute(); err != nil {
@@ -106,7 +108,7 @@ func TestListCommandPassesCustomPaginationOptions(t *testing.T) {
 		}), nil
 	})
 
-	_, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, "--size", "50", "--timestamp", "100")
+	_, err := executeListCommand(t, testCommandConfig(), "--size", "50", "--timestamp", "100")
 	if err != nil {
 		t.Fatalf("Execute() error = %v, want nil", err)
 	}
@@ -129,7 +131,7 @@ func TestListCommandPrintsMinutesInOrder(t *testing.T) {
 		}), nil
 	})
 
-	stdout, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"})
+	stdout, err := executeListCommand(t, testCommandConfig())
 	if err != nil {
 		t.Fatalf("Execute() error = %v, want nil", err)
 	}
@@ -168,7 +170,7 @@ func TestListCommandPrintsJSON(t *testing.T) {
 		}), nil
 	})
 
-	stdout, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, "--json")
+	stdout, err := executeListCommand(t, testCommandConfig(), "--json")
 	if err != nil {
 		t.Fatalf("Execute() error = %v, want nil", err)
 	}
@@ -216,7 +218,7 @@ func TestListCommandPrintsJSONForEmptyResult(t *testing.T) {
 		}), nil
 	})
 
-	stdout, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, "--json")
+	stdout, err := executeListCommand(t, testCommandConfig(), "--json")
 	if err != nil {
 		t.Fatalf("Execute() error = %v, want nil", err)
 	}
@@ -254,7 +256,7 @@ func TestListCommandPrintsEmptyMessage(t *testing.T) {
 		}), nil
 	})
 
-	stdout, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"})
+	stdout, err := executeListCommand(t, testCommandConfig())
 	if err != nil {
 		t.Fatalf("Execute() error = %v, want nil", err)
 	}
@@ -273,12 +275,15 @@ func TestListCommandPrintsFallbackTopicAndURL(t *testing.T) {
 		}), nil
 	})
 
-	stdout, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"})
+	config := testCommandConfig()
+	config.BaseURL = "https://meetings.custom.test"
+
+	stdout, err := executeListCommand(t, config)
 	if err != nil {
 		t.Fatalf("Execute() error = %v, want nil", err)
 	}
 
-	want := "token-1 (untitled) https://meetings.feishu.cn/minutes/token-1\n"
+	want := "token-1 (untitled) https://meetings.custom.test/minutes/token-1\n"
 	if stdout != want {
 		t.Fatalf("stdout = %q, want %q", stdout, want)
 	}
@@ -299,7 +304,7 @@ func TestListCommandPrintsNextPageFooter(t *testing.T) {
 		}), nil
 	})
 
-	stdout, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, "--size", "50")
+	stdout, err := executeListCommand(t, testCommandConfig(), "--size", "50")
 	if err != nil {
 		t.Fatalf("Execute() error = %v, want nil", err)
 	}
@@ -328,7 +333,7 @@ func TestListCommandDoesNotPrintNextPageFooterWhenHasMoreFalse(t *testing.T) {
 		}), nil
 	})
 
-	stdout, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"})
+	stdout, err := executeListCommand(t, testCommandConfig())
 	if err != nil {
 		t.Fatalf("Execute() error = %v, want nil", err)
 	}
@@ -357,7 +362,7 @@ func TestListCommandReturnsClientError(t *testing.T) {
 		return nil, wantErr
 	})
 
-	_, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"})
+	_, err := executeListCommand(t, testCommandConfig())
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Execute() error = %v, want %v", err, wantErr)
 	}
@@ -371,7 +376,7 @@ func TestListCommandReturnsListError(t *testing.T) {
 		}), nil
 	})
 
-	_, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"})
+	_, err := executeListCommand(t, testCommandConfig())
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Execute() error = %v, want %v", err, wantErr)
 	}
@@ -408,7 +413,7 @@ func TestListCommandRejectsInvalidPaginationOptions(t *testing.T) {
 				}), nil
 			})
 
-			_, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, tt.args...)
+			_, err := executeListCommand(t, testCommandConfig(), tt.args...)
 			if err == nil {
 				t.Fatal("Execute() error = nil, want error")
 			}

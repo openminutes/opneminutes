@@ -13,14 +13,10 @@ func TestIntegrationMinutesClient(t *testing.T) {
 		t.Skip("set OPENMINUTES_TEST_COOKIE to run integration test")
 	}
 
-	region := os.Getenv("OPENMINUTES_TEST_REGION")
-	if region == "" {
-		region = "feishu"
-	}
-
 	client, err := NewClient(Config{
-		Region: region,
-		Cookie: cookie,
+		Cookie:       cookie,
+		BaseURL:      os.Getenv("OPENMINUTES_TEST_BASE_URL"),
+		SpaceBaseURL: os.Getenv("OPENMINUTES_TEST_SPACE_BASE_URL"),
 	})
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
@@ -67,14 +63,10 @@ func TestIntegrationDownloadFile(t *testing.T) {
 		t.Skip("set OPENMINUTES_TEST_COOKIE and OPENMINUTES_TEST_OBJECT_TOKEN to run download integration test")
 	}
 
-	region := os.Getenv("OPENMINUTES_TEST_REGION")
-	if region == "" {
-		region = "feishu"
-	}
-
 	client, err := NewClient(Config{
-		Region: region,
-		Cookie: cookie,
+		Cookie:       cookie,
+		BaseURL:      os.Getenv("OPENMINUTES_TEST_BASE_URL"),
+		SpaceBaseURL: os.Getenv("OPENMINUTES_TEST_SPACE_BASE_URL"),
 	})
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)

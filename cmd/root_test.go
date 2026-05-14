@@ -30,7 +30,8 @@ func executeCommandWithConfig(t *testing.T, args ...string) (string, string, err
 	t.Helper()
 	withoutOpenMinutesEnv(t)
 
-	configPath := writeConfig(t, `region = "feishu"
+	configPath := writeConfig(t, `base_url = "https://meetings.example.test"
+space_base_url = "https://space.example.test"
 cookie = "session=abc"
 `)
 
@@ -324,7 +325,8 @@ func TestRootCommandSubcommandCreatesManualConfig(t *testing.T) {
 
 func TestRootCommandSubcommandUsesEnvWithMissingManualConfig(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "custom", "config.toml")
-	t.Setenv("OPENMINUTES_REGION", "larksuite")
+	t.Setenv("OPENMINUTES_BASE_URL", "https://env.example.test")
+	t.Setenv("OPENMINUTES_SPACE_BASE_URL", "https://env-space.example.test")
 	t.Setenv("OPENMINUTES_COOKIE", "session=env")
 	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
 		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
@@ -364,7 +366,8 @@ func TestRootCommandSubcommandUsesEnvWithMissingManualConfig(t *testing.T) {
 func TestRootCommandStoresConfigInContext(t *testing.T) {
 	withoutOpenMinutesEnv(t)
 
-	configPath := writeConfig(t, `region = "larksuite"
+	configPath := writeConfig(t, `base_url = "https://meetings.context.test"
+space_base_url = "https://space.context.test"
 cookie = "session=abc"
 `)
 	var gotConfig Config
@@ -392,7 +395,11 @@ cookie = "session=abc"
 		t.Fatal("configFromCommand() ok = false, want true")
 	}
 
-	wantConfig := Config{Region: "larksuite", Cookie: "session=abc"}
+	wantConfig := Config{
+		BaseURL:      "https://meetings.context.test",
+		SpaceBaseURL: "https://space.context.test",
+		Cookie:       "session=abc",
+	}
 	if gotConfig != wantConfig {
 		t.Fatalf("config = %#v, want %#v", gotConfig, wantConfig)
 	}
@@ -457,7 +464,8 @@ func TestExecute(t *testing.T) {
 
 	oldArgs := os.Args
 	oldExit := exit
-	configPath := writeConfig(t, `region = "feishu"
+	configPath := writeConfig(t, `base_url = "https://meetings.example.test"
+space_base_url = "https://space.example.test"
 cookie = "session=abc"
 `)
 	os.Args = []string{"openminutes", "--config", configPath, "get"}
@@ -476,7 +484,8 @@ func TestExecuteCommand(t *testing.T) {
 	withoutOpenMinutesEnv(t)
 
 	cmd := newRootCommand()
-	configPath := writeConfig(t, `region = "feishu"
+	configPath := writeConfig(t, `base_url = "https://meetings.example.test"
+space_base_url = "https://space.example.test"
 cookie = "session=abc"
 `)
 	cmd.SetArgs([]string{"--config", configPath, "get"})

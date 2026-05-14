@@ -77,7 +77,8 @@ to quickly create a Cobra application.`,
 
 			cmd.SetContext(contextWithConfig(cmd.Context(), config))
 			logger.Debug("config stored in command context",
-				zap.String("region", config.Region),
+				zap.String("base_url", config.BaseURL),
+				zap.String("space_base_url", config.SpaceBaseURL),
 				zap.Bool("cookie_present", config.Cookie != ""),
 			)
 			return nil

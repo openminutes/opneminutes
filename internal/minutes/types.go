@@ -9,7 +9,6 @@ import (
 
 // Config configures a Feishu Minutes HTTP client.
 type Config struct {
-	Region       string
 	Cookie       string
 	HTTPClient   *http.Client
 	BaseURL      string

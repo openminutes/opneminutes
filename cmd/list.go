@@ -76,8 +76,9 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	clientConfig := minutes.Config{
-		Region: config.Region,
-		Cookie: config.Cookie,
+		BaseURL:      config.BaseURL,
+		SpaceBaseURL: config.SpaceBaseURL,
+		Cookie:       config.Cookie,
 	}
 	if logger, ok := loggerFromContext(cmd.Context()); ok {
 		clientConfig.Logger = logger
@@ -122,7 +123,7 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, item := range items {
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s\n", item.ObjectToken, listTopic(item.Topic), listURL(item)); err != nil {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s\n", item.ObjectToken, listTopic(item.Topic), listURL(item, config.BaseURL)); err != nil {
 			return err
 		}
 	}
@@ -172,11 +173,12 @@ func listTopic(topic string) string {
 	return topic
 }
 
-func listURL(item minutes.Minute) string {
+func listURL(item minutes.Minute, baseURL string) string {
 	rawURL := strings.TrimSpace(item.URL)
 	if rawURL != "" {
 		return rawURL
 	}
 
-	return "https://meetings.feishu.cn/minutes/" + item.ObjectToken
+	baseURL = configBaseURLOrDefault(baseURL, defaultBaseURL)
+	return baseURL + "/minutes/" + item.ObjectToken
 }

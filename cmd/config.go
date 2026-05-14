@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,30 +14,44 @@ import (
 	"go.uber.org/zap"
 )
 
-const configTemplate = "region = \"\"\ncookie = \"\"\n"
-const defaultConfigFlagValue = "~/.config/openminutes/config.toml"
-const requiresConfigAnnotation = "openminutes.requires_config"
-const requiresConfirmationAnnotation = "openminutes.requires_confirmation"
+const (
+	defaultBaseURL      = "https://meetings.feishu.cn"
+	defaultSpaceBaseURL = "https://internal-api-space.feishu.cn"
+
+	configTemplate = "base_url = \"https://meetings.feishu.cn\"\nspace_base_url = \"https://internal-api-space.feishu.cn\"\ncookie = \"\"\n"
+
+	defaultConfigFlagValue         = "~/.config/openminutes/config.toml"
+	requiresConfigAnnotation       = "openminutes.requires_config"
+	requiresConfirmationAnnotation = "openminutes.requires_confirmation"
+)
 
 type Config struct {
-	Region string
-	Cookie string
+	BaseURL      string
+	SpaceBaseURL string
+	Cookie       string
 }
 
 type configContextKey struct{}
 
-var defaultConfigPathFunc = defaultConfigPath
+var (
+	defaultConfigPathFunc = defaultConfigPath
+	osUserHomeDir         = os.UserHomeDir
+	osUserConfigDir       = os.UserConfigDir
+	osStat                = os.Stat
+	osMkdirAll            = os.MkdirAll
+	osWriteFile           = os.WriteFile
+)
 
 func defaultConfigPath() string {
 	configDir := os.Getenv("XDG_CONFIG_HOME")
 	if configDir == "" {
-		homeDir, err := os.UserHomeDir()
+		homeDir, err := osUserHomeDir()
 		if err == nil && homeDir != "" {
 			configDir = filepath.Join(homeDir, ".config")
 		}
 	}
 	if configDir == "" {
-		userConfigDir, err := os.UserConfigDir()
+		userConfigDir, err := osUserConfigDir()
 		if err == nil && userConfigDir != "" {
 			configDir = userConfigDir
 		}
@@ -62,7 +77,8 @@ func loadConfigWithLogger(configPath string, logger *zap.Logger) (Config, error)
 	logger.Debug("config path resolved",
 		zap.String("path", configPath),
 		zap.Bool("explicit_path", strings.TrimSpace(rawConfigPath) != ""),
-		zap.Bool("region_env_present", envPresent("OPENMINUTES_REGION")),
+		zap.Bool("base_url_env_present", envPresent("OPENMINUTES_BASE_URL")),
+		zap.Bool("space_base_url_env_present", envPresent("OPENMINUTES_SPACE_BASE_URL")),
 		zap.Bool("cookie_env_present", envPresent("OPENMINUTES_COOKIE")),
 	)
 	if err := ensureConfigFileWithLogger(configPath, logger); err != nil {
@@ -80,7 +96,7 @@ func loadConfigWithLogger(configPath string, logger *zap.Logger) (Config, error)
 	v.AllowEmptyEnv(true)
 	v.AutomaticEnv()
 
-	for _, key := range []string{"region", "cookie"} {
+	for _, key := range []string{"base_url", "space_base_url", "cookie"} {
 		if err := v.BindEnv(key); err != nil {
 			return Config{}, err
 		}
@@ -95,15 +111,18 @@ func loadConfigWithLogger(configPath string, logger *zap.Logger) (Config, error)
 	}
 
 	config := Config{
-		Region: strings.TrimSpace(v.GetString("region")),
-		Cookie: v.GetString("cookie"),
+		BaseURL:      configBaseURLOrDefault(v.GetString("base_url"), defaultBaseURL),
+		SpaceBaseURL: configBaseURLOrDefault(v.GetString("space_base_url"), defaultSpaceBaseURL),
+		Cookie:       v.GetString("cookie"),
 	}
 	if err := validateConfig(config); err != nil {
 		logger.Debug("config validation failed",
 			zap.String("path", configPath),
-			zap.String("region", config.Region),
+			zap.String("base_url", config.BaseURL),
+			zap.String("space_base_url", config.SpaceBaseURL),
 			zap.Bool("cookie_present", strings.TrimSpace(config.Cookie) != ""),
-			zap.Bool("region_env_override", envPresent("OPENMINUTES_REGION")),
+			zap.Bool("base_url_env_override", envPresent("OPENMINUTES_BASE_URL")),
+			zap.Bool("space_base_url_env_override", envPresent("OPENMINUTES_SPACE_BASE_URL")),
 			zap.Bool("cookie_env_override", envPresent("OPENMINUTES_COOKIE")),
 			zap.Error(err),
 		)
@@ -112,9 +131,11 @@ func loadConfigWithLogger(configPath string, logger *zap.Logger) (Config, error)
 
 	logger.Debug("config loaded",
 		zap.String("path", configPath),
-		zap.String("region", config.Region),
+		zap.String("base_url", config.BaseURL),
+		zap.String("space_base_url", config.SpaceBaseURL),
 		zap.Bool("cookie_present", strings.TrimSpace(config.Cookie) != ""),
-		zap.Bool("region_env_override", envPresent("OPENMINUTES_REGION")),
+		zap.Bool("base_url_env_override", envPresent("OPENMINUTES_BASE_URL")),
+		zap.Bool("space_base_url_env_override", envPresent("OPENMINUTES_SPACE_BASE_URL")),
 		zap.Bool("cookie_env_override", envPresent("OPENMINUTES_COOKIE")),
 	)
 
@@ -126,7 +147,7 @@ func normalizeConfigPath(configPath string) string {
 		return defaultConfigPathFunc()
 	}
 
-	homeDir, err := os.UserHomeDir()
+	homeDir, err := osUserHomeDir()
 	if err != nil || homeDir == "" {
 		return configPath
 	}
@@ -150,7 +171,7 @@ func ensureConfigFileWithLogger(configPath string, logger *zap.Logger) error {
 		logger = zap.NewNop()
 	}
 
-	if _, err := os.Stat(configPath); err == nil {
+	if _, err := osStat(configPath); err == nil {
 		logger.Debug("config file found", zap.String("path", configPath))
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -158,11 +179,11 @@ func ensureConfigFileWithLogger(configPath string, logger *zap.Logger) error {
 	}
 
 	logger.Debug("config file missing, creating template", zap.String("path", configPath))
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+	if err := osMkdirAll(filepath.Dir(configPath), 0o700); err != nil {
 		return err
 	}
 
-	return os.WriteFile(configPath, []byte(configTemplate), 0o600)
+	return osWriteFile(configPath, []byte(configTemplate), 0o600)
 }
 
 func envPresent(key string) bool {
@@ -171,19 +192,60 @@ func envPresent(key string) bool {
 }
 
 func validateConfig(config Config) error {
-	if config.Region != "" && config.Region != "feishu" && config.Region != "larksuite" {
-		return fmt.Errorf("invalid region %q: must be one of feishu, larksuite", config.Region)
+	if err := validateConfigBaseURL("base_url", config.BaseURL); err != nil {
+		return err
+	}
+	if err := validateConfigBaseURL("space_base_url", config.SpaceBaseURL); err != nil {
+		return err
 	}
 
 	if strings.TrimSpace(config.Cookie) == "" {
 		return errors.New("cookie is required")
 	}
 
-	if config.Region == "" {
-		return fmt.Errorf("invalid region %q: must be one of feishu, larksuite", config.Region)
+	return nil
+}
+
+func configBaseURLOrDefault(rawURL, defaultURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return defaultURL
+	}
+
+	return trimBaseURLTrailingSlash(rawURL)
+}
+
+func validateConfigBaseURL(fieldName, rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return invalidConfigBaseURLError(fieldName, rawURL)
+	}
+
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+	default:
+		return invalidConfigBaseURLError(fieldName, rawURL)
+	}
+
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return invalidConfigBaseURLError(fieldName, rawURL)
 	}
 
 	return nil
+}
+
+func invalidConfigBaseURLError(fieldName, rawURL string) error {
+	return fmt.Errorf("invalid %s %q: must be an absolute http or https URL with a host", fieldName, rawURL)
+}
+
+func trimBaseURLTrailingSlash(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" || parsed.Path == "" {
+		return rawURL
+	}
+
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	return parsed.String()
 }
 
 func contextWithConfig(ctx context.Context, config Config) context.Context {
