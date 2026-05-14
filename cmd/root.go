@@ -44,6 +44,18 @@ to quickly create a Cobra application.`,
 			if !requiresConfig {
 				return nil
 			}
+			if commandRequiresConfirmation(cmd) {
+				confirmed, err := cmd.Flags().GetBool("yes")
+				if err != nil {
+					return err
+				}
+				if !confirmed {
+					logger.Debug("config load skipped",
+						zap.String("reason", "missing_confirmation"),
+					)
+					return nil
+				}
+			}
 
 			configPathForLoad := configPath
 			configPathSource := "flag"
@@ -75,6 +87,7 @@ to quickly create a Cobra application.`,
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", defaultConfigFlagValue, "config file path")
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "enable verbose debug logging")
 	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	rootCmd.AddCommand(newDeleteCommand())
 	rootCmd.AddCommand(newGetCommand())
 	rootCmd.AddCommand(newListCommand())
 	rootCmd.AddCommand(newUploadCommand())

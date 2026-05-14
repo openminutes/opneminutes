@@ -49,6 +49,13 @@ type ListMinutesPageResult struct {
 	NextTimestamp int64
 }
 
+// DeleteOptions controls deleting a minute from the minutes space.
+type DeleteOptions struct {
+	Language  string
+	SpaceName int
+	Destroy   bool
+}
+
 // Minute is a Feishu Minutes list item.
 type Minute struct {
 	ObjectToken string `json:"object_token"`

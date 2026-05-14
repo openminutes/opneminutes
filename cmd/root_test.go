@@ -47,7 +47,7 @@ func TestRootCommandHelp(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
 
-	for _, want := range []string{"openminutes", "Available Commands:", "get", "list", "upload", "--verbose"} {
+	for _, want := range []string{"openminutes", "Available Commands:", "delete", "get", "list", "upload", "--verbose"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, want to contain %q", stdout, want)
 		}
@@ -98,6 +98,29 @@ func TestRootCommandHelpSubcommandDoesNotRequireConfig(t *testing.T) {
 
 	if !strings.Contains(stdout, "Available Commands:") {
 		t.Fatalf("stdout = %q, want available commands", stdout)
+	}
+
+	if _, statErr := os.Stat(configPath); !os.IsNotExist(statErr) {
+		t.Fatalf("config file stat error = %v, want not exist", statErr)
+	}
+}
+
+func TestRootCommandDeleteWithoutConfirmationDoesNotRequireConfig(t *testing.T) {
+	withoutOpenMinutesEnv(t)
+
+	configPath := filepath.Join(t.TempDir(), "openminutes", "config.toml")
+	withDefaultConfigPath(t, configPath)
+
+	stdout, stderr, err := executeCommand("delete", "token-1")
+	if err == nil {
+		t.Fatal("Execute() error = nil, want error")
+	}
+
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "delete requires --yes") {
+		t.Fatalf("stderr = %q, want delete requires --yes", stderr)
 	}
 
 	if _, statErr := os.Stat(configPath); !os.IsNotExist(statErr) {
@@ -159,12 +182,22 @@ func TestRootCommandSubcommands(t *testing.T) {
 			}, nil
 		}), nil
 	})
+	withDeleteMinutesClient(t, func(config minutes.Config) (deleteMinutesClient, error) {
+		return deleteMinutesClientFunc(func(ctx context.Context, objectToken string, options minutes.DeleteOptions) error {
+			return nil
+		}), nil
+	})
 
 	tests := []struct {
 		name string
 		args []string
 		want string
 	}{
+		{
+			name: "delete",
+			args: []string{"delete", "token-root", "--yes"},
+			want: "Moved token-root to trash\n",
+		},
 		{
 			name: "get",
 			args: []string{"get"},

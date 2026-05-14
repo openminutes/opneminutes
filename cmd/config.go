@@ -16,6 +16,7 @@ import (
 const configTemplate = "region = \"\"\ncookie = \"\"\n"
 const defaultConfigFlagValue = "~/.config/openminutes/config.toml"
 const requiresConfigAnnotation = "openminutes.requires_config"
+const requiresConfirmationAnnotation = "openminutes.requires_confirmation"
 
 type Config struct {
 	Region string
@@ -197,6 +198,16 @@ func configFromCommand(cmd *cobra.Command) (Config, bool) {
 func commandRequiresConfig(cmd *cobra.Command) bool {
 	for current := cmd; current != nil; current = current.Parent() {
 		if current.Annotations[requiresConfigAnnotation] == "true" {
+			return true
+		}
+	}
+
+	return false
+}
+
+func commandRequiresConfirmation(cmd *cobra.Command) bool {
+	for current := cmd; current != nil; current = current.Parent() {
+		if current.Annotations[requiresConfirmationAnnotation] == "true" {
 			return true
 		}
 	}
