@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -140,6 +141,109 @@ func TestListCommandPrintsMinutesInOrder(t *testing.T) {
 	}, "\n")
 	if stdout != want {
 		t.Fatalf("stdout = %q, want %q", stdout, want)
+	}
+}
+
+func TestListCommandPrintsJSON(t *testing.T) {
+	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
+			return &minutes.ListMinutesPageResult{
+				Items: []minutes.Minute{
+					{
+						ObjectToken: "token-1",
+						Topic:       "First",
+						URL:         "https://example.test/first",
+						ShareTime:   200,
+					},
+					{
+						ObjectToken: "token-2",
+						Topic:       "Second",
+						URL:         "https://example.test/second",
+						ShareTime:   100,
+					},
+				},
+				HasMore:       true,
+				NextTimestamp: 100,
+			}, nil
+		}), nil
+	})
+
+	stdout, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, "--json")
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	var got struct {
+		Items         []minutes.Minute `json:"items"`
+		HasMore       bool             `json:"has_more"`
+		NextTimestamp int64            `json:"next_timestamp"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v, stdout = %q", err, stdout)
+	}
+
+	want := struct {
+		Items         []minutes.Minute `json:"items"`
+		HasMore       bool             `json:"has_more"`
+		NextTimestamp int64            `json:"next_timestamp"`
+	}{
+		Items: []minutes.Minute{
+			{
+				ObjectToken: "token-1",
+				Topic:       "First",
+				URL:         "https://example.test/first",
+				ShareTime:   200,
+			},
+			{
+				ObjectToken: "token-2",
+				Topic:       "Second",
+				URL:         "https://example.test/second",
+				ShareTime:   100,
+			},
+		},
+		HasMore:       true,
+		NextTimestamp: 100,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("json output = %#v, want %#v", got, want)
+	}
+}
+
+func TestListCommandPrintsJSONForEmptyResult(t *testing.T) {
+	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) (*minutes.ListMinutesPageResult, error) {
+			return &minutes.ListMinutesPageResult{}, nil
+		}), nil
+	})
+
+	stdout, err := executeListCommand(t, Config{Region: "feishu", Cookie: "session=abc"}, "--json")
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	if strings.Contains(stdout, "No minutes found.") {
+		t.Fatalf("stdout = %q, want JSON without empty message", stdout)
+	}
+
+	var got struct {
+		Items         []minutes.Minute `json:"items"`
+		HasMore       bool             `json:"has_more"`
+		NextTimestamp int64            `json:"next_timestamp"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v, stdout = %q", err, stdout)
+	}
+	if got.Items == nil {
+		t.Fatal("items = nil, want empty slice")
+	}
+	if len(got.Items) != 0 {
+		t.Fatalf("items = %#v, want empty slice", got.Items)
+	}
+	if got.HasMore {
+		t.Fatal("has_more = true, want false")
+	}
+	if got.NextTimestamp != 0 {
+		t.Fatalf("next_timestamp = %d, want 0", got.NextTimestamp)
 	}
 }
 

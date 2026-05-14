@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -26,6 +27,7 @@ var newListMinutesClient = func(config minutes.Config) (listMinutesClient, error
 func newListCommand() *cobra.Command {
 	var size int
 	var timestamp int64
+	var jsonOutput bool
 
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -43,6 +45,7 @@ to quickly create a Cobra application.`,
 	}
 	cmd.Flags().IntVar(&size, "size", 20, "number of minutes to request")
 	cmd.Flags().Int64Var(&timestamp, "timestamp", 0, "pagination timestamp")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output result as JSON")
 
 	return cmd
 }
@@ -95,6 +98,22 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	jsonOutput, err := cmd.Flags().GetBool("json")
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		if err := writeListJSON(cmd, result); err != nil {
+			return err
+		}
+		logger.Debug("list command completed",
+			zap.Int("count", len(result.Items)),
+			zap.Bool("has_more", result.HasMore),
+			zap.Int64("next_timestamp", result.NextTimestamp),
+		)
+		return nil
+	}
+
 	items := result.Items
 	if len(items) == 0 {
 		logger.Debug("list command completed", zap.Int("count", 0))
@@ -119,6 +138,29 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 		zap.Int64("next_timestamp", result.NextTimestamp),
 	)
 	return nil
+}
+
+type listJSONOutput struct {
+	Items         []minutes.Minute `json:"items"`
+	HasMore       bool             `json:"has_more"`
+	NextTimestamp int64            `json:"next_timestamp"`
+}
+
+func writeListJSON(cmd *cobra.Command, result *minutes.ListMinutesPageResult) error {
+	items := result.Items
+	if items == nil {
+		items = []minutes.Minute{}
+	}
+
+	output := listJSONOutput{
+		Items:         items,
+		HasMore:       result.HasMore,
+		NextTimestamp: result.NextTimestamp,
+	}
+	encoder := json.NewEncoder(cmd.OutOrStdout())
+	encoder.SetIndent("", "  ")
+
+	return encoder.Encode(output)
 }
 
 func listTopic(topic string) string {

@@ -13,3 +13,8 @@ run *args:
     rm -f ./openminutes
     go build -o ./openminutes .
     ./openminutes --config ./test.config.toml {{args}}
+
+list *args:
+    rm -f ./openminutes
+    go build -o ./openminutes .
+    ./openminutes --config ./test.config.toml list {{args}}
