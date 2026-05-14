@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -97,6 +98,174 @@ func TestGetCommandDefaultExportWritesStdout(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(tempDir, "token-1.txt")); !os.IsNotExist(err) {
 		t.Fatalf("implicit output file stat error = %v, want not exist", err)
+	}
+}
+
+func TestGetCommandJSONExportWritesInlineContent(t *testing.T) {
+	var gotToken string
+	var gotOptions minutes.SubtitleOptions
+	withGetMinutesClient(t, func(config minutes.Config) (getMinutesClient, error) {
+		return getMinutesClientFunc(func(ctx context.Context, objectToken string, options minutes.SubtitleOptions) ([]byte, error) {
+			gotToken = objectToken
+			gotOptions = options
+			return []byte("hello\nworld\n"), nil
+		}), nil
+	})
+
+	stdout, err := executeGetCommand(t, testCommandConfig(),
+		" token-1 ",
+		"--file_type", " SRT ",
+		"--speaker",
+		"--timestamp",
+		"--json",
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	if gotToken != "token-1" {
+		t.Fatalf("ExportSubtitle() token = %q, want token-1", gotToken)
+	}
+	wantOptions := minutes.SubtitleOptions{Format: "srt", AddSpeaker: true, AddTimestamp: true}
+	if !reflect.DeepEqual(gotOptions, wantOptions) {
+		t.Fatalf("ExportSubtitle() options = %#v, want %#v", gotOptions, wantOptions)
+	}
+
+	var got struct {
+		ObjectToken string  `json:"object_token"`
+		FileType    string  `json:"file_type"`
+		Speaker     bool    `json:"speaker"`
+		Timestamp   bool    `json:"timestamp"`
+		Bytes       int     `json:"bytes"`
+		Content     *string `json:"content"`
+		OutputPath  string  `json:"output_path"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v, stdout = %q", err, stdout)
+	}
+
+	if got.ObjectToken != "token-1" {
+		t.Fatalf("object_token = %q, want token-1", got.ObjectToken)
+	}
+	if got.FileType != "srt" {
+		t.Fatalf("file_type = %q, want srt", got.FileType)
+	}
+	if !got.Speaker {
+		t.Fatal("speaker = false, want true")
+	}
+	if !got.Timestamp {
+		t.Fatal("timestamp = false, want true")
+	}
+	if got.Bytes != len("hello\nworld\n") {
+		t.Fatalf("bytes = %d, want %d", got.Bytes, len("hello\nworld\n"))
+	}
+	if got.Content == nil {
+		t.Fatal("content = nil, want inline content")
+	}
+	if *got.Content != "hello\nworld\n" {
+		t.Fatalf("content = %q, want exported content", *got.Content)
+	}
+	if got.OutputPath != "" {
+		t.Fatalf("output_path = %q, want empty", got.OutputPath)
+	}
+}
+
+func TestGetCommandJSONOutputWritesFileAndMetadata(t *testing.T) {
+	outputPath := filepath.Join(t.TempDir(), "subtitle.srt")
+	data := []byte("1\n00:00:00,000 --> 00:00:01,000\nHi\n")
+	withGetMinutesClient(t, func(config minutes.Config) (getMinutesClient, error) {
+		return getMinutesClientFunc(func(ctx context.Context, objectToken string, options minutes.SubtitleOptions) ([]byte, error) {
+			return data, nil
+		}), nil
+	})
+
+	stdout, err := executeGetCommand(t, testCommandConfig(),
+		"token-1",
+		"--file_type", "srt",
+		"--speaker",
+		"--timestamp",
+		"--json",
+		"--output", outputPath,
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	fileData, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v, want nil", err)
+	}
+	if string(fileData) != string(data) {
+		t.Fatalf("output file = %q, want exported bytes", fileData)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(stdout), &raw); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v, stdout = %q", err, stdout)
+	}
+	if _, ok := raw["content"]; ok {
+		t.Fatalf("content present in JSON metadata, want omitted: %q", stdout)
+	}
+
+	var got struct {
+		ObjectToken string `json:"object_token"`
+		FileType    string `json:"file_type"`
+		Speaker     bool   `json:"speaker"`
+		Timestamp   bool   `json:"timestamp"`
+		Bytes       int    `json:"bytes"`
+		OutputPath  string `json:"output_path"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v, stdout = %q", err, stdout)
+	}
+
+	want := struct {
+		ObjectToken string `json:"object_token"`
+		FileType    string `json:"file_type"`
+		Speaker     bool   `json:"speaker"`
+		Timestamp   bool   `json:"timestamp"`
+		Bytes       int    `json:"bytes"`
+		OutputPath  string `json:"output_path"`
+	}{
+		ObjectToken: "token-1",
+		FileType:    "srt",
+		Speaker:     true,
+		Timestamp:   true,
+		Bytes:       len(data),
+		OutputPath:  outputPath,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("json output = %#v, want %#v", got, want)
+	}
+}
+
+func TestGetCommandJSONExportIncludesEmptyContent(t *testing.T) {
+	withGetMinutesClient(t, func(config minutes.Config) (getMinutesClient, error) {
+		return getMinutesClientFunc(func(ctx context.Context, objectToken string, options minutes.SubtitleOptions) ([]byte, error) {
+			return []byte{}, nil
+		}), nil
+	})
+
+	stdout, err := executeGetCommand(t, testCommandConfig(), "token-1", "--json")
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	var got struct {
+		Bytes   int     `json:"bytes"`
+		Content *string `json:"content"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v, stdout = %q", err, stdout)
+	}
+	if got.Bytes != 0 {
+		t.Fatalf("bytes = %d, want 0", got.Bytes)
+	}
+	if got.Content == nil {
+		t.Fatal("content = nil, want empty string")
+	}
+	if *got.Content != "" {
+		t.Fatalf("content = %q, want empty string", *got.Content)
 	}
 }
 
@@ -483,6 +652,18 @@ func TestRunGetCommandReturnsFlagErrors(t *testing.T) {
 			},
 			want: "timestamp",
 		},
+		{
+			name: "missing json flag",
+			setup: func(t *testing.T) *cobra.Command {
+				cmd := &cobra.Command{}
+				cmd.Flags().String("file_type", "txt", "")
+				cmd.Flags().String("output", "", "")
+				cmd.Flags().Bool("speaker", false, "")
+				cmd.Flags().Bool("timestamp", false, "")
+				return cmd
+			},
+			want: "json",
+		},
 	}
 
 	for _, tt := range tests {
@@ -517,6 +698,37 @@ func TestGetCommandReturnsDefaultStdoutError(t *testing.T) {
 	err := cmd.Execute()
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Execute() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestGetCommandReturnsJSONStdoutError(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "inline content", args: []string{"token-1", "--json"}},
+		{name: "output metadata", args: []string{"token-1", "--json", "--output", filepath.Join(t.TempDir(), "out.txt")}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wantErr := errors.New("stdout failed")
+			withGetMinutesClient(t, func(config minutes.Config) (getMinutesClient, error) {
+				return getMinutesClientFunc(func(ctx context.Context, objectToken string, options minutes.SubtitleOptions) ([]byte, error) {
+					return []byte("subtitle"), nil
+				}), nil
+			})
+
+			cmd := newGetCommand()
+			cmd.SetOut(errorWriter{err: wantErr})
+			cmd.SetArgs(tt.args)
+			cmd.SetContext(contextWithConfig(context.Background(), testCommandConfig()))
+
+			err := cmd.Execute()
+			if !errors.Is(err, wantErr) {
+				t.Fatalf("Execute() error = %v, want %v", err, wantErr)
+			}
+		})
 	}
 }
 

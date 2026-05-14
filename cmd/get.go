@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -48,8 +49,10 @@ func newGetCommand() *cobra.Command {
 Export one Minute as txt or srt. Speaker names and timestamps can be included
 with flags. Exported content is printed to stdout by default. Use --output or
 -O to write to a file instead. Output files are created exclusively and existing
-files are never overwritten.`,
+files are never overwritten. Use --json for structured output metadata and,
+when --output is not used, inline exported content.`,
 		Example: `  openminutes get m_abc123
+  openminutes get m_abc123 --json
   openminutes get m_abc123 --file_type srt --speaker --timestamp -O meeting.srt`,
 		RunE: runGetCommand,
 	}
@@ -57,6 +60,7 @@ files are never overwritten.`,
 	cmd.Flags().Bool("speaker", false, "include speaker names in the exported text")
 	cmd.Flags().Bool("timestamp", false, "include timestamps in the exported text")
 	cmd.Flags().StringP("output", "O", "", "write exported content to this file path")
+	cmd.Flags().Bool("json", false, "print structured JSON instead of plain text")
 
 	return cmd
 }
@@ -113,6 +117,10 @@ func runGetCommand(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	jsonOutput, err := cmd.Flags().GetBool("json")
+	if err != nil {
+		return err
+	}
 
 	config, ok := configFromCommand(cmd)
 	if !ok {
@@ -149,6 +157,32 @@ func runGetCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	if outputPath == "" {
+		if jsonOutput {
+			content := string(data)
+			if err := writeGetJSON(cmd, getJSONOutput{
+				ObjectToken: token,
+				FileType:    fileType,
+				Speaker:     speaker,
+				Timestamp:   timestamp,
+				Bytes:       len(data),
+				Content:     &content,
+			}); err != nil {
+				logger.Debug("write subtitle JSON stdout failed",
+					zap.String("object_token", token),
+					zap.Error(err),
+				)
+				return err
+			}
+
+			logger.Debug("get command completed",
+				zap.String("object_token", token),
+				zap.String("output", "stdout"),
+				zap.String("file_type", fileType),
+				zap.Int("bytes", len(data)),
+			)
+			return nil
+		}
+
 		if err := writeGetStdout(cmd.OutOrStdout(), data); err != nil {
 			logger.Debug("write subtitle stdout failed",
 				zap.String("object_token", token),
@@ -174,6 +208,27 @@ func runGetCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if jsonOutput {
+		if err := writeGetJSON(cmd, getJSONOutput{
+			ObjectToken: token,
+			FileType:    fileType,
+			Speaker:     speaker,
+			Timestamp:   timestamp,
+			Bytes:       len(data),
+			OutputPath:  outputPath,
+		}); err != nil {
+			return err
+		}
+
+		logger.Debug("get command completed",
+			zap.String("object_token", token),
+			zap.String("path", outputPath),
+			zap.String("file_type", fileType),
+			zap.Int("bytes", len(data)),
+		)
+		return nil
+	}
+
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Saved %s to %s\n", token, outputPath); err != nil {
 		return err
 	}
@@ -185,6 +240,23 @@ func runGetCommand(cmd *cobra.Command, args []string) error {
 		zap.Int("bytes", len(data)),
 	)
 	return nil
+}
+
+type getJSONOutput struct {
+	ObjectToken string  `json:"object_token"`
+	FileType    string  `json:"file_type"`
+	Speaker     bool    `json:"speaker"`
+	Timestamp   bool    `json:"timestamp"`
+	Bytes       int     `json:"bytes"`
+	Content     *string `json:"content,omitempty"`
+	OutputPath  string  `json:"output_path,omitempty"`
+}
+
+func writeGetJSON(cmd *cobra.Command, output getJSONOutput) error {
+	encoder := json.NewEncoder(cmd.OutOrStdout())
+	encoder.SetIndent("", "  ")
+
+	return encoder.Encode(output)
 }
 
 func getOutputPath(cmd *cobra.Command, _ string, _ string) (string, error) {
