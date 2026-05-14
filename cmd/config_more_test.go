@@ -286,6 +286,9 @@ func TestDefaultCommandClientFactories(t *testing.T) {
 	if _, err := newDeleteMinutesClient(config); err != nil {
 		t.Fatalf("newDeleteMinutesClient() error = %v, want nil", err)
 	}
+	if _, err := newUploadMinutesClient(config); err != nil {
+		t.Fatalf("newUploadMinutesClient() error = %v, want nil", err)
+	}
 }
 
 func TestRunListCommandFlagGetterErrors(t *testing.T) {

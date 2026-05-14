@@ -188,6 +188,12 @@ func TestRootCommandSubcommands(t *testing.T) {
 			return nil
 		}), nil
 	})
+	withUploadMinutesClient(t, func(config minutes.Config) (uploadMinutesClient, error) {
+		return uploadMinutesClientFunc(func(ctx context.Context, options minutes.UploadOptions) (*minutes.UploadResult, error) {
+			return &minutes.UploadResult{ObjectToken: "object-root"}, nil
+		}), nil
+	})
+	uploadPath := writeUploadFile(t, t.TempDir(), "root.aac", []byte("audio"))
 
 	tests := []struct {
 		name string
@@ -211,8 +217,8 @@ func TestRootCommandSubcommands(t *testing.T) {
 		},
 		{
 			name: "upload",
-			args: []string{"upload"},
-			want: "upload called\n",
+			args: []string{"upload", uploadPath},
+			want: "Uploaded object-root https://meetings.example.test/minutes/object-root\n",
 		},
 	}
 
