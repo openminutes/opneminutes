@@ -429,11 +429,25 @@ func TestListCommandReturnsStdoutWriteErrors(t *testing.T) {
 		writer *failingWriter
 	}{
 		{
-			name: "row",
+			name: "header",
 			result: &minutes.ListMinutesPageResult{
 				Items: []minutes.Minute{{ObjectToken: "token-1", Topic: "First", URL: "https://example.test/first"}},
 			},
 			writer: &failingWriter{failAt: 1},
+		},
+		{
+			name: "row",
+			result: &minutes.ListMinutesPageResult{
+				Items: []minutes.Minute{{ObjectToken: "token-1", Topic: "First", URL: "https://example.test/first"}},
+			},
+			writer: &failingWriter{failAt: 2},
+		},
+		{
+			name: "footer spacer",
+			result: &minutes.ListMinutesPageResult{
+				Items: []minutes.Minute{{ObjectToken: "token-1", Topic: "First", URL: "https://example.test/first"}},
+			},
+			writer: &failingWriter{failAt: 3},
 		},
 		{
 			name: "next page footer",
@@ -442,7 +456,14 @@ func TestListCommandReturnsStdoutWriteErrors(t *testing.T) {
 				HasMore:       true,
 				NextTimestamp: 100,
 			},
-			writer: &failingWriter{failAt: 2},
+			writer: &failingWriter{failAt: 4},
+		},
+		{
+			name: "get content footer",
+			result: &minutes.ListMinutesPageResult{
+				Items: []minutes.Minute{{ObjectToken: "token-1", Topic: "First", URL: "https://example.test/first"}},
+			},
+			writer: &failingWriter{failAt: 4},
 		},
 	}
 

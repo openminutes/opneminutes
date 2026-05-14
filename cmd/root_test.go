@@ -224,7 +224,13 @@ func TestRootCommandSubcommands(t *testing.T) {
 		{
 			name: "list",
 			args: []string{"list"},
-			want: "token-1 Root https://example.test/root\n",
+			want: strings.Join([]string{
+				"Columns: token name URL",
+				"token-1 Root https://example.test/root",
+				"",
+				"Get content: openminutes get <token>",
+				"",
+			}, "\n"),
 		},
 		{
 			name: "upload",
@@ -273,7 +279,14 @@ func TestRootCommandVerboseListWritesDebugLogsToStderr(t *testing.T) {
 		t.Fatalf("Execute() error = %v, want nil", err)
 	}
 
-	if stdout != "token-1 Verbose https://example.test/verbose\n" {
+	wantStdout := strings.Join([]string{
+		"Columns: token name URL",
+		"token-1 Verbose https://example.test/verbose",
+		"",
+		"Get content: openminutes get <token>",
+		"",
+	}, "\n")
+	if stdout != wantStdout {
 		t.Fatalf("stdout = %q, want list output only", stdout)
 	}
 
@@ -304,7 +317,14 @@ func TestRootCommandVerboseListFlagAfterSubcommand(t *testing.T) {
 		t.Fatalf("Execute() error = %v, want nil", err)
 	}
 
-	if stdout != "token-1 After https://example.test/after\n" {
+	wantStdout := strings.Join([]string{
+		"Columns: token name URL",
+		"token-1 After https://example.test/after",
+		"",
+		"Get content: openminutes get <token>",
+		"",
+	}, "\n")
+	if stdout != wantStdout {
 		t.Fatalf("stdout = %q, want list output only", stdout)
 	}
 	if !strings.Contains(stderr, "command started") {
@@ -366,7 +386,14 @@ func TestRootCommandSubcommandUsesEnvWithMissingManualConfig(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
 
-	if stdout != "token-env Env https://example.test/env\n" {
+	wantStdout := strings.Join([]string{
+		"Columns: token name URL",
+		"token-env Env https://example.test/env",
+		"",
+		"Get content: openminutes get <token>",
+		"",
+	}, "\n")
+	if stdout != wantStdout {
 		t.Fatalf("stdout = %q, want mocked list output", stdout)
 	}
 

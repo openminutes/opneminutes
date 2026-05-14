@@ -167,8 +167,11 @@ func TestListCommandPrintsMinutesInOrder(t *testing.T) {
 	}
 
 	want := strings.Join([]string{
+		"Columns: token name URL",
 		"token-1 First https://example.test/first",
 		"token-2 Second https://example.test/second",
+		"",
+		"Get content: openminutes get <token>",
 		"",
 	}, "\n")
 	if stdout != want {
@@ -200,12 +203,18 @@ func TestListCommandAllPrintsAllMinutesWithoutNextPageFooter(t *testing.T) {
 		t.Fatalf("ListMinutes() options = %#v, want %#v", gotOptions, wantOptions)
 	}
 	want := strings.Join([]string{
+		"Columns: token name URL",
 		"token-1 First https://example.test/first",
 		"token-2 Second https://example.test/second",
+		"",
+		"Get content: openminutes get <token>",
 		"",
 	}, "\n")
 	if stdout != want {
 		t.Fatalf("stdout = %q, want %q", stdout, want)
+	}
+	if !strings.Contains(stdout, "Get content: openminutes get <token>") {
+		t.Fatalf("stdout = %q, want get content footer", stdout)
 	}
 	if strings.Contains(stdout, "Next page:") {
 		t.Fatalf("stdout = %q, want no next page footer", stdout)
@@ -432,7 +441,13 @@ func TestListCommandPrintsFallbackTopicAndURL(t *testing.T) {
 		t.Fatalf("Execute() error = %v, want nil", err)
 	}
 
-	want := "token-1 (untitled) https://meetings.custom.test/minutes/token-1\n"
+	want := strings.Join([]string{
+		"Columns: token name URL",
+		"token-1 (untitled) https://meetings.custom.test/minutes/token-1",
+		"",
+		"Get content: openminutes get <token>",
+		"",
+	}, "\n")
 	if stdout != want {
 		t.Fatalf("stdout = %q, want %q", stdout, want)
 	}
@@ -459,8 +474,11 @@ func TestListCommandPrintsNextPageFooter(t *testing.T) {
 	}
 
 	want := strings.Join([]string{
+		"Columns: token name URL",
 		"token-1 First https://example.test/first",
+		"",
 		"Next page: openminutes list --size 50 --timestamp 123",
+		"Get content: openminutes get <token>",
 		"",
 	}, "\n")
 	if stdout != want {
@@ -485,6 +503,16 @@ func TestListCommandDoesNotPrintNextPageFooterWhenHasMoreFalse(t *testing.T) {
 	stdout, err := executeListCommand(t, testCommandConfig())
 	if err != nil {
 		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+	want := strings.Join([]string{
+		"Columns: token name URL",
+		"token-1 First https://example.test/first",
+		"",
+		"Get content: openminutes get <token>",
+		"",
+	}, "\n")
+	if stdout != want {
+		t.Fatalf("stdout = %q, want %q", stdout, want)
 	}
 	if strings.Contains(stdout, "Next page:") {
 		t.Fatalf("stdout = %q, want no next page footer", stdout)

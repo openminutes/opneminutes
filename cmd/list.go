@@ -133,15 +133,25 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	out := cmd.OutOrStdout()
+	if _, err := fmt.Fprintln(out, "Columns: token name URL"); err != nil {
+		return err
+	}
 	for _, item := range items {
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s\n", item.ObjectToken, listTopic(item.Topic), listURL(item, config.BaseURL)); err != nil {
+		if _, err := fmt.Fprintf(out, "%s %s %s\n", item.ObjectToken, listTopic(item.Topic), listURL(item, config.BaseURL)); err != nil {
 			return err
 		}
 	}
+	if _, err := fmt.Fprintln(out); err != nil {
+		return err
+	}
 	if result.HasMore {
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Next page: openminutes list --size %d --timestamp %d\n", size, result.NextTimestamp); err != nil {
+		if _, err := fmt.Fprintf(out, "Next page: openminutes list --size %d --timestamp %d\n", size, result.NextTimestamp); err != nil {
 			return err
 		}
+	}
+	if _, err := fmt.Fprintln(out, "Get content: openminutes get <token>"); err != nil {
+		return err
 	}
 
 	logger.Debug("list command completed",
