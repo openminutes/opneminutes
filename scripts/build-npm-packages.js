@@ -10,14 +10,14 @@ const rootDir = path.resolve(__dirname, '..');
 
 const repository = {
   type: 'git',
-  url: 'git+https://github.com/openminutes/opneminutes.git',
+  url: 'git+https://github.com/openminutes/openminutes.git',
 };
 
 const bugs = {
-  url: 'https://github.com/openminutes/opneminutes/issues',
+  url: 'https://github.com/openminutes/openminutes/issues',
 };
 
-const homepage = 'https://github.com/openminutes/opneminutes#readme';
+const homepage = 'https://github.com/openminutes/openminutes#readme';
 const license = 'GPL-3.0-only';
 const mainPackageName = '@openminutes/cli';
 

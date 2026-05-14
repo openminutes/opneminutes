@@ -8,12 +8,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/openminutes/opneminutes.git"
+    "url": "git+https://github.com/openminutes/openminutes.git"
   },
   "bugs": {
-    "url": "https://github.com/openminutes/opneminutes/issues"
+    "url": "https://github.com/openminutes/openminutes/issues"
   },
-  "homepage": "https://github.com/openminutes/opneminutes#readme",
+  "homepage": "https://github.com/openminutes/openminutes#readme",
   "devDependencies": {
     "vitepress": "^2.0.0-alpha.17"
   }
