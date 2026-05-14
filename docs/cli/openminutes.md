@@ -4,6 +4,13 @@
 
 `openminutes` is the root command for the OpenMinutes CLI. It provides global flags, version output, command discovery, and shell completion entry points.
 
+Project guidance:
+
+- Repository: <https://github.com/openminutes/openminutes>
+- License: `GPL-3.0-only`
+- LLM docs: <https://openminutes.duckduckapp.com/llms.txt> and <https://openminutes.duckduckapp.com/llms-full.txt>
+- Quick start: <https://openminutes.duckduckapp.com/quick-start.html>
+
 Commands that call Feishu/Lark APIs load configuration and require a valid authentication cookie. The root help and completion commands do not require configuration.
 
 ## Usage
@@ -43,7 +50,7 @@ openminutes --verbose list --json
 
 ## Output
 
-`openminutes --help` prints available commands and global flags.
+`openminutes --help` prints project guidance links, licensing information, available commands, and global flags.
 
 `openminutes --version` prints:
 

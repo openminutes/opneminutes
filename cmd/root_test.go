@@ -48,7 +48,21 @@ func TestRootCommandHelp(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
 
-	for _, want := range []string{"openminutes", "Available Commands:", "delete", "get", "list", "upload", "--verbose"} {
+	for _, want := range []string{
+		"openminutes",
+		"Available Commands:",
+		"delete",
+		"get",
+		"list",
+		"upload",
+		"--verbose",
+		"Repository: https://github.com/openminutes/openminutes",
+		"License: GPL-3.0-only",
+		"LLM docs:",
+		"https://openminutes.duckduckapp.com/llms.txt",
+		"https://openminutes.duckduckapp.com/llms-full.txt",
+		"Quick start: https://openminutes.duckduckapp.com/quick-start.html",
+	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, want to contain %q", stdout, want)
 		}

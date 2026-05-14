@@ -23,7 +23,15 @@ func newRootCommand() *cobra.Command {
 		Version:      buildVersion(),
 		Short:        "A simple CLI for Feishu/Lark Minutes",
 		SilenceUsage: true,
-		Long:         `OpenMinutes is an easy-to-use CLI for managing Feishu/Lark Minutes.`,
+		Long: `OpenMinutes is an easy-to-use CLI for managing Feishu/Lark Minutes.
+
+Guidance:
+  Repository: https://github.com/openminutes/openminutes
+  License: GPL-3.0-only
+  LLM docs:
+    https://openminutes.duckduckapp.com/llms.txt
+    https://openminutes.duckduckapp.com/llms-full.txt
+  Quick start: https://openminutes.duckduckapp.com/quick-start.html`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			logger := zap.NewNop()
 			if verbose {
