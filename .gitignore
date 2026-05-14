@@ -1,3 +1,5 @@
 coverage.out
 openminutes
 test.config.toml
+docs/.vitepress/dist
+docs/.vitepress/cache
