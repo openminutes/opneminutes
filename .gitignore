@@ -3,3 +3,4 @@ openminutes
 test.config.toml
 docs/.vitepress/dist
 docs/.vitepress/cache
+node_modules/
