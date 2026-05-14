@@ -47,10 +47,37 @@ func TestRootCommandHelp(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
 
-	for _, want := range []string{"openminutes", "Available Commands:", "get", "list", "upload"} {
+	for _, want := range []string{"openminutes", "Available Commands:", "get", "list", "upload", "--verbose"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, want to contain %q", stdout, want)
 		}
+	}
+}
+
+func TestRootCommandVerboseHelpDoesNotRequireConfig(t *testing.T) {
+	withoutOpenMinutesEnv(t)
+
+	configPath := filepath.Join(t.TempDir(), "openminutes", "config.toml")
+	withDefaultConfigPath(t, configPath)
+
+	stdout, stderr, err := executeCommand("--verbose", "help")
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	if !strings.Contains(stderr, "command started") {
+		t.Fatalf("stderr = %q, want command debug log", stderr)
+	}
+	if strings.Contains(stderr, "config load") || strings.Contains(stderr, "config loaded") {
+		t.Fatalf("stderr = %q, want no config logs", stderr)
+	}
+
+	if !strings.Contains(stdout, "--verbose") {
+		t.Fatalf("stdout = %q, want verbose flag", stdout)
+	}
+
+	if _, statErr := os.Stat(configPath); !os.IsNotExist(statErr) {
+		t.Fatalf("config file stat error = %v, want not exist", statErr)
 	}
 }
 
@@ -90,6 +117,33 @@ func TestRootCommandUnknownCommand(t *testing.T) {
 
 	if !strings.Contains(stderr, `unknown command "missing"`) {
 		t.Fatalf("stderr = %q, want unknown command error", stderr)
+	}
+}
+
+func TestRootCommandVerboseUnknownCommandDoesNotRequireConfig(t *testing.T) {
+	withoutOpenMinutesEnv(t)
+
+	configPath := filepath.Join(t.TempDir(), "openminutes", "config.toml")
+	withDefaultConfigPath(t, configPath)
+
+	stdout, stderr, err := executeCommand("--verbose", "missing")
+	if err == nil {
+		t.Fatal("Execute() error = nil, want error")
+	}
+
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+
+	if !strings.Contains(stderr, `unknown command "missing"`) {
+		t.Fatalf("stderr = %q, want unknown command error", stderr)
+	}
+	if strings.Contains(stderr, "DEBUG") {
+		t.Fatalf("stderr = %q, want no debug logs for unknown command", stderr)
+	}
+
+	if _, statErr := os.Stat(configPath); !os.IsNotExist(statErr) {
+		t.Fatalf("config file stat error = %v, want not exist", statErr)
 	}
 }
 
@@ -141,6 +195,63 @@ func TestRootCommandSubcommands(t *testing.T) {
 				t.Fatalf("stdout = %q, want %q", stdout, tt.want)
 			}
 		})
+	}
+}
+
+func TestRootCommandVerboseListWritesDebugLogsToStderr(t *testing.T) {
+	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
+		if config.Logger == nil {
+			t.Fatal("config.Logger = nil, want verbose logger")
+		}
+		config.Logger.Debug("mock list client received logger")
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
+			return []minutes.Minute{{
+				ObjectToken: "token-1",
+				Topic:       "Verbose",
+				URL:         "https://example.test/verbose",
+			}}, nil
+		}), nil
+	})
+
+	stdout, stderr, err := executeCommandWithConfig(t, "--verbose", "list")
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	if stdout != "token-1 Verbose https://example.test/verbose\n" {
+		t.Fatalf("stdout = %q, want list output only", stdout)
+	}
+
+	for _, want := range []string{"DEBUG", "command started", "config loaded", "list command completed", "mock list client received logger"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr = %q, want to contain %q", stderr, want)
+		}
+	}
+	if strings.Contains(stderr, "session=abc") {
+		t.Fatalf("stderr = %q, want no cookie value", stderr)
+	}
+}
+
+func TestRootCommandVerboseListFlagAfterSubcommand(t *testing.T) {
+	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {
+		if config.Logger == nil {
+			t.Fatal("config.Logger = nil, want verbose logger")
+		}
+		return listMinutesClientFunc(func(ctx context.Context, options minutes.ListOptions) ([]minutes.Minute, error) {
+			return []minutes.Minute{{ObjectToken: "token-1", Topic: "After", URL: "https://example.test/after"}}, nil
+		}), nil
+	})
+
+	stdout, stderr, err := executeCommandWithConfig(t, "list", "--verbose")
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	if stdout != "token-1 After https://example.test/after\n" {
+		t.Fatalf("stdout = %q, want list output only", stdout)
+	}
+	if !strings.Contains(stderr, "command started") {
+		t.Fatalf("stderr = %q, want debug logs", stderr)
 	}
 }
 
@@ -267,6 +378,36 @@ func TestRootCommandVersion(t *testing.T) {
 
 	if want := "openminutes version v1.2.3-12345678\n"; stdout != want {
 		t.Fatalf("stdout = %q, want %q", stdout, want)
+	}
+}
+
+func TestRootCommandVerboseVersionDoesNotRequireConfig(t *testing.T) {
+	withoutOpenMinutesEnv(t)
+
+	oldVersion, oldCommit := version, commit
+	t.Cleanup(func() {
+		version = oldVersion
+		commit = oldCommit
+	})
+	version = "v1.2.3"
+	commit = "1234567890abcdef"
+
+	configPath := filepath.Join(t.TempDir(), "openminutes", "config.toml")
+	withDefaultConfigPath(t, configPath)
+
+	stdout, stderr, err := executeCommand("--verbose", "--version")
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	if stdout != "openminutes version v1.2.3-12345678\n" {
+		t.Fatalf("stdout = %q, want version output", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
+	}
+	if _, statErr := os.Stat(configPath); !os.IsNotExist(statErr) {
+		t.Fatalf("config file stat error = %v, want not exist", statErr)
 	}
 }
 

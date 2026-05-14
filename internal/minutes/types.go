@@ -3,6 +3,8 @@ package minutes
 import (
 	"io"
 	"net/http"
+
+	"go.uber.org/zap"
 )
 
 // Config configures a Feishu Minutes HTTP client.
@@ -13,6 +15,7 @@ type Config struct {
 	BaseURL      string
 	SpaceBaseURL string
 	UserAgent    string
+	Logger       *zap.Logger
 }
 
 // Client provides low-level Feishu Minutes HTTP operations.
@@ -24,6 +27,7 @@ type Client struct {
 	csrfToken    string
 	userAgent    string
 	referer      string
+	logger       *zap.Logger
 }
 
 // ListOptions controls listing minutes from the minutes space.

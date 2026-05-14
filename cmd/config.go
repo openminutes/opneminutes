@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"go.uber.org/zap"
 )
 
 const configTemplate = "region = \"\"\ncookie = \"\"\n"
@@ -47,8 +48,27 @@ func defaultConfigPath() string {
 }
 
 func loadConfig(configPath string) (Config, error) {
+	return loadConfigWithLogger(configPath, zap.NewNop())
+}
+
+func loadConfigWithLogger(configPath string, logger *zap.Logger) (Config, error) {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	rawConfigPath := configPath
 	configPath = normalizeConfigPath(configPath)
-	if err := ensureConfigFile(configPath); err != nil {
+	logger.Debug("config path resolved",
+		zap.String("path", configPath),
+		zap.Bool("explicit_path", strings.TrimSpace(rawConfigPath) != ""),
+		zap.Bool("region_env_present", envPresent("OPENMINUTES_REGION")),
+		zap.Bool("cookie_env_present", envPresent("OPENMINUTES_COOKIE")),
+	)
+	if err := ensureConfigFileWithLogger(configPath, logger); err != nil {
+		logger.Debug("config file ensure failed",
+			zap.String("path", configPath),
+			zap.Error(err),
+		)
 		return Config{}, err
 	}
 
@@ -66,6 +86,10 @@ func loadConfig(configPath string) (Config, error) {
 	}
 
 	if err := v.ReadInConfig(); err != nil {
+		logger.Debug("config read failed",
+			zap.String("path", configPath),
+			zap.Error(err),
+		)
 		return Config{}, err
 	}
 
@@ -74,8 +98,24 @@ func loadConfig(configPath string) (Config, error) {
 		Cookie: v.GetString("cookie"),
 	}
 	if err := validateConfig(config); err != nil {
+		logger.Debug("config validation failed",
+			zap.String("path", configPath),
+			zap.String("region", config.Region),
+			zap.Bool("cookie_present", strings.TrimSpace(config.Cookie) != ""),
+			zap.Bool("region_env_override", envPresent("OPENMINUTES_REGION")),
+			zap.Bool("cookie_env_override", envPresent("OPENMINUTES_COOKIE")),
+			zap.Error(err),
+		)
 		return Config{}, err
 	}
+
+	logger.Debug("config loaded",
+		zap.String("path", configPath),
+		zap.String("region", config.Region),
+		zap.Bool("cookie_present", strings.TrimSpace(config.Cookie) != ""),
+		zap.Bool("region_env_override", envPresent("OPENMINUTES_REGION")),
+		zap.Bool("cookie_env_override", envPresent("OPENMINUTES_COOKIE")),
+	)
 
 	return config, nil
 }
@@ -101,17 +141,32 @@ func normalizeConfigPath(configPath string) string {
 }
 
 func ensureConfigFile(configPath string) error {
+	return ensureConfigFileWithLogger(configPath, zap.NewNop())
+}
+
+func ensureConfigFileWithLogger(configPath string, logger *zap.Logger) error {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
 	if _, err := os.Stat(configPath); err == nil {
+		logger.Debug("config file found", zap.String("path", configPath))
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 
+	logger.Debug("config file missing, creating template", zap.String("path", configPath))
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
 		return err
 	}
 
 	return os.WriteFile(configPath, []byte(configTemplate), 0o600)
+}
+
+func envPresent(key string) bool {
+	_, ok := os.LookupEnv(key)
+	return ok
 }
 
 func validateConfig(config Config) error {

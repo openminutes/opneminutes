@@ -9,8 +9,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 const (
@@ -23,21 +26,44 @@ const (
 
 // NewClient creates a Feishu Minutes client.
 func NewClient(config Config) (*Client, error) {
+	logger := config.Logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
 	region := strings.TrimSpace(config.Region)
+	regionDefaulted := region == ""
 	if region == "" {
 		region = defaultRegion
 	}
 	if region != "feishu" && region != "larksuite" {
-		return nil, fmt.Errorf("invalid region %q: must be one of feishu, larksuite", region)
+		err := fmt.Errorf("invalid region %q: must be one of feishu, larksuite", region)
+		logger.Debug("client initialization failed",
+			zap.String("region", region),
+			zap.Error(err),
+		)
+		return nil, err
 	}
 
 	cookie := strings.TrimSpace(config.Cookie)
 	if cookie == "" {
-		return nil, errors.New("cookie is required")
+		err := errors.New("cookie is required")
+		logger.Debug("client initialization failed",
+			zap.String("region", region),
+			zap.Bool("cookie_present", false),
+			zap.Error(err),
+		)
+		return nil, err
 	}
 
 	csrfToken, err := csrfTokenFromCookie(cookie)
 	if err != nil {
+		logger.Debug("client initialization failed",
+			zap.String("region", region),
+			zap.Bool("cookie_present", true),
+			zap.Bool("csrf_token_present", false),
+			zap.Error(err),
+		)
 		return nil, err
 	}
 
@@ -47,23 +73,43 @@ func NewClient(config Config) (*Client, error) {
 	}
 
 	baseURL := strings.TrimRight(strings.TrimSpace(config.BaseURL), "/")
+	baseURLDefaulted := baseURL == ""
 	if baseURL == "" {
 		var ok bool
 		baseURL, ok = defaultBaseURLForRegion(region)
 		if !ok {
-			return nil, fmt.Errorf("base URL is required for region %q", region)
+			err := fmt.Errorf("base URL is required for region %q", region)
+			logger.Debug("client initialization failed",
+				zap.String("region", region),
+				zap.Bool("base_url_defaulted", baseURLDefaulted),
+				zap.Error(err),
+			)
+			return nil, err
 		}
 	}
 
 	spaceBaseURL := strings.TrimRight(strings.TrimSpace(config.SpaceBaseURL), "/")
+	spaceBaseURLDefaulted := spaceBaseURL == ""
 	if spaceBaseURL == "" {
 		spaceBaseURL = defaultSpaceBaseURL
 	}
 
 	userAgent := strings.TrimSpace(config.UserAgent)
+	userAgentDefaulted := userAgent == ""
 	if userAgent == "" {
 		userAgent = defaultUserAgent
 	}
+
+	logger.Debug("client initialized",
+		zap.String("region", region),
+		zap.Bool("region_defaulted", regionDefaulted),
+		zap.String("base_url", baseURL),
+		zap.Bool("base_url_defaulted", baseURLDefaulted),
+		zap.String("space_base_url", spaceBaseURL),
+		zap.Bool("space_base_url_defaulted", spaceBaseURLDefaulted),
+		zap.Bool("user_agent_defaulted", userAgentDefaulted),
+		zap.Bool("csrf_token_present", csrfToken != ""),
+	)
 
 	return &Client{
 		httpClient:   httpClient,
@@ -73,6 +119,7 @@ func NewClient(config Config) (*Client, error) {
 		csrfToken:    csrfToken,
 		userAgent:    userAgent,
 		referer:      baseURL + "/minutes/home",
+		logger:       logger,
 	}, nil
 }
 
@@ -140,25 +187,35 @@ func buildURL(baseURL, path string, query url.Values) string {
 }
 
 func (c *Client) doJSON(req *http.Request, result any) error {
+	start := time.Now()
 	resp, err := c.httpClient.Do(req)
+	duration := time.Since(start)
 	if err != nil {
+		c.logHTTPRequestFailed(req, duration, err)
 		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return httpStatusError(req, resp)
+		err := httpStatusError(req, resp)
+		c.logHTTPStatusError(req, resp, duration, 0, err)
+		return err
 	}
 
+	body := &countingReader{reader: resp.Body}
 	var envelope responseEnvelope
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+	if err := json.NewDecoder(body).Decode(&envelope); err != nil {
+		duration = time.Since(start)
 		if errors.Is(err, io.EOF) && result == nil {
+			c.logHTTPCompleted(req, resp, duration, body.bytesRead)
 			return nil
 		}
+		c.logHTTPJSONDecodeFailed(req, resp, duration, body.bytesRead, err)
 		return err
 	}
 
 	if envelope.Code != 0 {
+		duration = time.Since(start)
 		message := envelope.Msg
 		if message == "" {
 			message = envelope.Message
@@ -166,34 +223,57 @@ func (c *Client) doJSON(req *http.Request, result any) error {
 		if message == "" {
 			message = "request failed"
 		}
-		return fmt.Errorf("%s %s: server code %d: %s", req.Method, req.URL.RequestURI(), envelope.Code, message)
+		err := fmt.Errorf("%s %s: server code %d: %s", req.Method, req.URL.RequestURI(), envelope.Code, message)
+		c.logHTTPServerCodeError(req, resp, duration, body.bytesRead, envelope.Code, message, err)
+		return err
 	}
 
 	if result == nil {
+		duration = time.Since(start)
+		c.logHTTPCompleted(req, resp, duration, body.bytesRead)
 		return nil
 	}
 	if len(envelope.Data) == 0 || bytes.Equal(envelope.Data, []byte("null")) {
-		return fmt.Errorf("%s %s: response missing data", req.Method, req.URL.RequestURI())
+		duration = time.Since(start)
+		err := fmt.Errorf("%s %s: response missing data", req.Method, req.URL.RequestURI())
+		c.logHTTPJSONDecodeFailed(req, resp, duration, body.bytesRead, err)
+		return err
 	}
 
-	return json.Unmarshal(envelope.Data, result)
+	if err := json.Unmarshal(envelope.Data, result); err != nil {
+		duration = time.Since(start)
+		c.logHTTPJSONDecodeFailed(req, resp, duration, body.bytesRead, err)
+		return err
+	}
+
+	duration = time.Since(start)
+	c.logHTTPCompleted(req, resp, duration, body.bytesRead)
+	return nil
 }
 
 func (c *Client) doRaw(req *http.Request) ([]byte, error) {
+	start := time.Now()
 	resp, err := c.httpClient.Do(req)
+	duration := time.Since(start)
 	if err != nil {
+		c.logHTTPRequestFailed(req, duration, err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, httpStatusError(req, resp)
+		err := httpStatusError(req, resp)
+		c.logHTTPStatusError(req, resp, duration, 0, err)
+		return nil, err
 	}
 
 	data, err := io.ReadAll(resp.Body)
+	duration = time.Since(start)
 	if err != nil {
+		c.logHTTPReadFailed(req, resp, duration, 0, err)
 		return nil, err
 	}
+	responseSize := int64(len(data))
 
 	if strings.Contains(resp.Header.Get("content-type"), "application/json") {
 		var envelope responseEnvelope
@@ -205,26 +285,41 @@ func (c *Client) doRaw(req *http.Request) ([]byte, error) {
 			if message == "" {
 				message = "request failed"
 			}
-			return nil, fmt.Errorf("%s %s: server code %d: %s", req.Method, req.URL.RequestURI(), envelope.Code, message)
+			err := fmt.Errorf("%s %s: server code %d: %s", req.Method, req.URL.RequestURI(), envelope.Code, message)
+			c.logHTTPServerCodeError(req, resp, duration, responseSize, envelope.Code, message, err)
+			return nil, err
 		}
 	}
 
+	c.logHTTPCompleted(req, resp, duration, responseSize)
 	return data, nil
 }
 
 func (c *Client) doStream(req *http.Request, dst io.Writer) error {
+	start := time.Now()
 	resp, err := c.httpClient.Do(req)
+	duration := time.Since(start)
 	if err != nil {
+		c.logHTTPRequestFailed(req, duration, err)
 		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return httpStatusError(req, resp)
+		err := httpStatusError(req, resp)
+		c.logHTTPStatusError(req, resp, duration, 0, err)
+		return err
 	}
 
-	_, err = io.Copy(dst, resp.Body)
-	return err
+	bytesWritten, err := io.Copy(dst, resp.Body)
+	duration = time.Since(start)
+	if err != nil {
+		c.logHTTPReadFailed(req, resp, duration, bytesWritten, err)
+		return err
+	}
+
+	c.logHTTPCompleted(req, resp, duration, bytesWritten)
+	return nil
 }
 
 func httpStatusError(req *http.Request, resp *http.Response) error {
@@ -236,6 +331,159 @@ type responseEnvelope struct {
 	Msg     string          `json:"msg"`
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data"`
+}
+
+type countingReader struct {
+	reader    io.Reader
+	bytesRead int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.bytesRead += int64(n)
+	return n, err
+}
+
+func (c *Client) logHTTPRequestFailed(req *http.Request, duration time.Duration, err error) {
+	c.logger.Debug("http request failed",
+		append(c.requestLogFields(req),
+			zap.Duration("duration", duration),
+			c.errorLogField(req, err),
+		)...,
+	)
+}
+
+func (c *Client) logHTTPStatusError(req *http.Request, resp *http.Response, duration time.Duration, responseSize int64, err error) {
+	c.logger.Debug("http status error",
+		append(c.responseLogFields(req, resp, duration, responseSize),
+			c.errorLogField(req, err),
+		)...,
+	)
+}
+
+func (c *Client) logHTTPJSONDecodeFailed(req *http.Request, resp *http.Response, duration time.Duration, responseSize int64, err error) {
+	c.logger.Debug("http json decode failed",
+		append(c.responseLogFields(req, resp, duration, responseSize),
+			c.errorLogField(req, err),
+		)...,
+	)
+}
+
+func (c *Client) logHTTPReadFailed(req *http.Request, resp *http.Response, duration time.Duration, responseSize int64, err error) {
+	c.logger.Debug("http response read failed",
+		append(c.responseLogFields(req, resp, duration, responseSize),
+			c.errorLogField(req, err),
+		)...,
+	)
+}
+
+func (c *Client) logHTTPServerCodeError(req *http.Request, resp *http.Response, duration time.Duration, responseSize int64, code int, message string, err error) {
+	c.logger.Debug("http server code error",
+		append(c.responseLogFields(req, resp, duration, responseSize),
+			zap.Int("server_code", code),
+			zap.String("server_message", message),
+			c.errorLogField(req, err),
+		)...,
+	)
+}
+
+func (c *Client) logHTTPCompleted(req *http.Request, resp *http.Response, duration time.Duration, responseSize int64) {
+	c.logger.Debug("http request completed",
+		c.responseLogFields(req, resp, duration, responseSize)...,
+	)
+}
+
+func (c *Client) responseLogFields(req *http.Request, resp *http.Response, duration time.Duration, responseSize int64) []zap.Field {
+	fields := append(c.requestLogFields(req),
+		zap.Int("status", resp.StatusCode),
+		zap.String("content_type", resp.Header.Get("content-type")),
+		zap.Duration("duration", duration),
+		zap.Int64("response_size", responseSize),
+	)
+	if resp.ContentLength >= 0 {
+		fields = append(fields, zap.Int64("content_length", resp.ContentLength))
+	}
+
+	return fields
+}
+
+func (c *Client) requestLogFields(req *http.Request) []zap.Field {
+	fields := []zap.Field{
+		zap.String("method", req.Method),
+		zap.String("url_host", req.URL.Host),
+		zap.String("url_path", req.URL.Path),
+	}
+	if req.URL.RawQuery == "" {
+		return append(fields, zap.String("url_query", ""))
+	}
+	if c.shouldLogQuery(req.URL) {
+		return append(fields, zap.String("url_query", req.URL.RawQuery))
+	}
+
+	query := req.URL.Query()
+	keys := make([]string, 0, len(query))
+	for key := range query {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	return append(fields,
+		zap.Bool("url_query_redacted", true),
+		zap.Bool("url_query_present", true),
+		zap.Strings("url_query_keys", keys),
+	)
+}
+
+func (c *Client) errorLogField(req *http.Request, err error) zap.Field {
+	if err == nil {
+		return zap.String("error", "")
+	}
+	if req != nil && c.shouldLogQuery(req.URL) {
+		return zap.Error(err)
+	}
+
+	return zap.String("error", redactURLQueryText(err.Error()))
+}
+
+func (c *Client) shouldLogQuery(rawURL *url.URL) bool {
+	for _, base := range []string{c.baseURL, c.spaceBaseURL} {
+		parsed, err := url.Parse(base)
+		if err == nil && parsed.Host == rawURL.Host {
+			return true
+		}
+	}
+
+	return false
+}
+
+func redactURLQueryText(text string) string {
+	if !strings.Contains(text, "?") {
+		return text
+	}
+
+	var builder strings.Builder
+	builder.Grow(len(text))
+	redacting := false
+	for _, r := range text {
+		if redacting {
+			switch r {
+			case ' ', '\t', '\n', '\r', '"', '\'', '`':
+				redacting = false
+				builder.WriteRune(r)
+			}
+			continue
+		}
+
+		if r == '?' {
+			builder.WriteString("?<redacted>")
+			redacting = true
+			continue
+		}
+
+		builder.WriteRune(r)
+	}
+
+	return builder.String()
 }
 
 func defaultString(value, fallback string) string {
