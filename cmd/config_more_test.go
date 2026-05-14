@@ -266,6 +266,45 @@ func TestValidateConfigBaseURLRejectsQueryAndFragment(t *testing.T) {
 	}
 }
 
+func TestValidateConfigRejectsInvalidURLs(t *testing.T) {
+	tests := []struct {
+		name   string
+		config Config
+		want   string
+	}{
+		{
+			name: "invalid base url",
+			config: Config{
+				BaseURL:      "meetings.example.test",
+				SpaceBaseURL: defaultSpaceBaseURL,
+				Cookie:       "session=abc",
+			},
+			want: "invalid base_url",
+		},
+		{
+			name: "invalid space base url",
+			config: Config{
+				BaseURL:      defaultBaseURL,
+				SpaceBaseURL: "space.example.test",
+				Cookie:       "session=abc",
+			},
+			want: "invalid space_base_url",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateConfig(tt.config)
+			if err == nil {
+				t.Fatal("validateConfig() error = nil, want invalid URL error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("validateConfig() error = %q, want %q", err.Error(), tt.want)
+			}
+		})
+	}
+}
+
 func TestLoggingHelpersAcceptNilInputs(t *testing.T) {
 	logger, ok := loggerFromContext(contextWithLogger(context.Background(), nil))
 	if !ok || logger == nil {

@@ -17,10 +17,13 @@ import (
 )
 
 const (
-	defaultBaseURL      = "https://meetings.feishu.cn"
-	defaultSpaceBaseURL = "https://internal-api-space.feishu.cn"
-	defaultUserAgent    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
-	defaultLanguage     = "zh_cn"
+	DefaultBaseURL       = "https://meetings.feishu.cn"
+	DefaultSpaceBaseURL  = "https://internal-api-space.feishu.cn"
+	defaultBaseURL       = DefaultBaseURL
+	defaultSpaceBaseURL  = DefaultSpaceBaseURL
+	defaultUserAgent     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+	defaultLanguage      = "zh_cn"
+	defaultClientTimeout = 30 * time.Second
 )
 
 // NewClient creates a Feishu Minutes client.
@@ -52,15 +55,10 @@ func NewClient(config Config) (*Client, error) {
 
 	httpClient := config.HTTPClient
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = defaultHTTPClient()
 	}
 
-	baseURL := strings.TrimSpace(config.BaseURL)
-	baseURLDefaulted := baseURL == ""
-	if baseURL == "" {
-		baseURL = defaultBaseURL
-	}
-	baseURL, err = normalizeClientBaseURL("base_url", baseURL)
+	baseURL, baseURLDefaulted, err := NormalizeBaseURLOrDefault("base_url", config.BaseURL, defaultBaseURL)
 	if err != nil {
 		logger.Debug("client initialization failed",
 			zap.String("base_url", baseURL),
@@ -70,12 +68,7 @@ func NewClient(config Config) (*Client, error) {
 		return nil, err
 	}
 
-	spaceBaseURL := strings.TrimSpace(config.SpaceBaseURL)
-	spaceBaseURLDefaulted := spaceBaseURL == ""
-	if spaceBaseURL == "" {
-		spaceBaseURL = defaultSpaceBaseURL
-	}
-	spaceBaseURL, err = normalizeClientBaseURL("space_base_url", spaceBaseURL)
+	spaceBaseURL, spaceBaseURLDefaulted, err := NormalizeBaseURLOrDefault("space_base_url", config.SpaceBaseURL, defaultSpaceBaseURL)
 	if err != nil {
 		logger.Debug("client initialization failed",
 			zap.String("space_base_url", spaceBaseURL),
@@ -112,29 +105,8 @@ func NewClient(config Config) (*Client, error) {
 	}, nil
 }
 
-func normalizeClientBaseURL(fieldName, rawURL string) (string, error) {
-	rawURL = strings.TrimSpace(rawURL)
-	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", invalidClientBaseURLError(fieldName, rawURL)
-	}
-
-	switch strings.ToLower(parsed.Scheme) {
-	case "http", "https":
-	default:
-		return "", invalidClientBaseURLError(fieldName, rawURL)
-	}
-
-	if parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", invalidClientBaseURLError(fieldName, rawURL)
-	}
-
-	parsed.Path = strings.TrimRight(parsed.Path, "/")
-	return parsed.String(), nil
-}
-
-func invalidClientBaseURLError(fieldName, rawURL string) error {
-	return fmt.Errorf("invalid %s %q: must be an absolute http or https URL with a host", fieldName, rawURL)
+func defaultHTTPClient() *http.Client {
+	return &http.Client{Timeout: defaultClientTimeout}
 }
 
 func csrfTokenFromCookie(cookie string) (string, error) {
@@ -228,7 +200,7 @@ func (c *Client) doJSON(req *http.Request, result any) error {
 		if message == "" {
 			message = "request failed"
 		}
-		err := fmt.Errorf("%s %s: server code %d: %s", req.Method, req.URL.RequestURI(), envelope.Code, message)
+		err := serverCodeError(req, envelope.Code, message)
 		c.logHTTPServerCodeError(req, resp, duration, body.bytesRead, envelope.Code, message, err)
 		return err
 	}
@@ -290,7 +262,7 @@ func (c *Client) doRaw(req *http.Request) ([]byte, error) {
 			if message == "" {
 				message = "request failed"
 			}
-			err := fmt.Errorf("%s %s: server code %d: %s", req.Method, req.URL.RequestURI(), envelope.Code, message)
+			err := serverCodeError(req, envelope.Code, message)
 			c.logHTTPServerCodeError(req, resp, duration, responseSize, envelope.Code, message, err)
 			return nil, err
 		}
@@ -328,7 +300,46 @@ func (c *Client) doStream(req *http.Request, dst io.Writer) error {
 }
 
 func httpStatusError(req *http.Request, resp *http.Response) error {
-	return fmt.Errorf("%s %s: unexpected HTTP status %s", req.Method, req.URL.RequestURI(), resp.Status)
+	return &HTTPStatusError{
+		Method:     req.Method,
+		RequestURI: req.URL.RequestURI(),
+		Status:     resp.Status,
+		StatusCode: resp.StatusCode,
+	}
+}
+
+func serverCodeError(req *http.Request, code int, message string) error {
+	return &ServerCodeError{
+		Method:     req.Method,
+		RequestURI: req.URL.RequestURI(),
+		Code:       code,
+		Message:    message,
+	}
+}
+
+// HTTPStatusError describes a non-2xx HTTP response.
+type HTTPStatusError struct {
+	Method     string
+	RequestURI string
+	Status     string
+	StatusCode int
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("%s %s: unexpected HTTP status %s", e.Method, e.RequestURI, e.Status)
+}
+
+// ServerCodeError describes a successful HTTP response with a non-zero Feishu
+// response code.
+type ServerCodeError struct {
+	Method     string
+	RequestURI string
+	Code       int
+	Message    string
+}
+
+func (e *ServerCodeError) Error() string {
+	return fmt.Sprintf("%s %s: server code %d: %s", e.Method, e.RequestURI, e.Code, e.Message)
 }
 
 type responseEnvelope struct {

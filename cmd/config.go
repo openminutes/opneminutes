@@ -3,11 +3,11 @@ package cmd
 import (
 	"context"
 	"errors"
-	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"openminutes/internal/minutes"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	defaultBaseURL      = "https://meetings.feishu.cn"
-	defaultSpaceBaseURL = "https://internal-api-space.feishu.cn"
+	defaultBaseURL      = minutes.DefaultBaseURL
+	defaultSpaceBaseURL = minutes.DefaultSpaceBaseURL
 
 	configTemplate = "base_url = \"https://meetings.feishu.cn\"\nspace_base_url = \"https://internal-api-space.feishu.cn\"\ncookie = \"\"\n"
 
@@ -111,9 +111,34 @@ func loadConfigWithLogger(configPath string, logger *zap.Logger) (Config, error)
 	}
 
 	config := Config{
-		BaseURL:      configBaseURLOrDefault(v.GetString("base_url"), defaultBaseURL),
-		SpaceBaseURL: configBaseURLOrDefault(v.GetString("space_base_url"), defaultSpaceBaseURL),
-		Cookie:       v.GetString("cookie"),
+		Cookie: v.GetString("cookie"),
+	}
+	var err error
+	config.BaseURL, _, err = minutes.NormalizeBaseURLOrDefault("base_url", v.GetString("base_url"), defaultBaseURL)
+	if err != nil {
+		logger.Debug("config validation failed",
+			zap.String("path", configPath),
+			zap.String("base_url", strings.TrimSpace(v.GetString("base_url"))),
+			zap.Bool("cookie_present", strings.TrimSpace(config.Cookie) != ""),
+			zap.Bool("base_url_env_override", envPresent("OPENMINUTES_BASE_URL")),
+			zap.Bool("space_base_url_env_override", envPresent("OPENMINUTES_SPACE_BASE_URL")),
+			zap.Bool("cookie_env_override", envPresent("OPENMINUTES_COOKIE")),
+			zap.Error(err),
+		)
+		return Config{}, err
+	}
+	config.SpaceBaseURL, _, err = minutes.NormalizeBaseURLOrDefault("space_base_url", v.GetString("space_base_url"), defaultSpaceBaseURL)
+	if err != nil {
+		logger.Debug("config validation failed",
+			zap.String("path", configPath),
+			zap.String("space_base_url", strings.TrimSpace(v.GetString("space_base_url"))),
+			zap.Bool("cookie_present", strings.TrimSpace(config.Cookie) != ""),
+			zap.Bool("base_url_env_override", envPresent("OPENMINUTES_BASE_URL")),
+			zap.Bool("space_base_url_env_override", envPresent("OPENMINUTES_SPACE_BASE_URL")),
+			zap.Bool("cookie_env_override", envPresent("OPENMINUTES_COOKIE")),
+			zap.Error(err),
+		)
+		return Config{}, err
 	}
 	if err := validateConfig(config); err != nil {
 		logger.Debug("config validation failed",
@@ -206,46 +231,9 @@ func validateConfig(config Config) error {
 	return nil
 }
 
-func configBaseURLOrDefault(rawURL, defaultURL string) string {
-	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == "" {
-		return defaultURL
-	}
-
-	return trimBaseURLTrailingSlash(rawURL)
-}
-
 func validateConfigBaseURL(fieldName, rawURL string) error {
-	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return invalidConfigBaseURLError(fieldName, rawURL)
-	}
-
-	switch strings.ToLower(parsed.Scheme) {
-	case "http", "https":
-	default:
-		return invalidConfigBaseURLError(fieldName, rawURL)
-	}
-
-	if parsed.RawQuery != "" || parsed.Fragment != "" {
-		return invalidConfigBaseURLError(fieldName, rawURL)
-	}
-
-	return nil
-}
-
-func invalidConfigBaseURLError(fieldName, rawURL string) error {
-	return fmt.Errorf("invalid %s %q: must be an absolute http or https URL with a host", fieldName, rawURL)
-}
-
-func trimBaseURLTrailingSlash(rawURL string) string {
-	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Host == "" || parsed.Path == "" {
-		return rawURL
-	}
-
-	parsed.Path = strings.TrimRight(parsed.Path, "/")
-	return parsed.String()
+	_, err := minutes.NormalizeBaseURL(fieldName, rawURL)
+	return err
 }
 
 func contextWithConfig(ctx context.Context, config Config) context.Context {

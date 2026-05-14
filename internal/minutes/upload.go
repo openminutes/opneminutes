@@ -26,42 +26,94 @@ var jsonMarshal = json.Marshal
 
 // UploadFile uploads a local media file to Feishu Minutes.
 func (c *Client) UploadFile(ctx context.Context, options UploadOptions) (*UploadResult, error) {
-	upload, err := newUploadSource(options)
+	upload, err := c.openUploadSource(options)
 	if err != nil {
-		c.logger.Debug("upload file source failed", zap.Error(err))
 		return nil, err
 	}
 	if closer, ok := upload.reader.(io.Closer); ok {
 		defer closer.Close()
 	}
+
+	fileHeader, err := c.prepareUploadSource(upload)
+	if err != nil {
+		return nil, err
+	}
+
+	language := defaultString(options.Language, defaultLanguage)
+	session, err := c.prepareUploadSession(ctx, upload, fileHeader, options, language)
+	if err != nil {
+		return nil, err
+	}
+
+	blocks, err := c.planUploadBlocks(upload, session)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := c.transferUploadBlocks(ctx, upload, session, blocks, language); err != nil {
+		return nil, err
+	}
+
+	if err := c.finalizeUpload(ctx, session, options, language); err != nil {
+		return nil, err
+	}
+
+	result := session.result()
+	c.logger.Debug("upload file completed",
+		zap.String("name", upload.name),
+		zap.String("object_token", result.ObjectToken),
+		zap.String("upload_id", result.UploadID),
+		zap.String("vhid", result.VHID),
+		zap.Int("num_blocks", result.NumBlocks),
+		zap.Bool("upload_token_present", result.UploadToken != ""),
+	)
+	return result, nil
+}
+
+func (c *Client) openUploadSource(options UploadOptions) (*uploadSource, error) {
+	upload, err := newUploadSource(options)
+	if err != nil {
+		c.logger.Debug("upload file source failed", zap.Error(err))
+		return nil, err
+	}
+
 	c.logger.Debug("upload file started",
 		zap.String("name", upload.name),
 		zap.Int64("size", upload.size),
 	)
+	return upload, nil
+}
 
+func (c *Client) prepareUploadSource(upload *uploadSource) (string, error) {
 	if err := seekStart(upload.reader); err != nil {
 		c.logger.Debug("upload file seek failed",
 			zap.String("name", upload.name),
 			zap.Error(err),
 		)
-		return nil, err
+		return "", err
 	}
+
 	fileHeader, err := readFileHeader(upload.reader)
 	if err != nil {
 		c.logger.Debug("upload file header read failed",
 			zap.String("name", upload.name),
 			zap.Error(err),
 		)
-		return nil, err
+		return "", err
 	}
+
 	if err := seekStart(upload.reader); err != nil {
 		c.logger.Debug("upload file seek failed",
 			zap.String("name", upload.name),
 			zap.Error(err),
 		)
-		return nil, err
+		return "", err
 	}
 
+	return fileHeader, nil
+}
+
+func (c *Client) prepareUploadSession(ctx context.Context, upload *uploadSource, fileHeader string, options UploadOptions, language string) (*uploadSession, error) {
 	fileID := strings.TrimSpace(options.FileID)
 	fileIDDefaulted := fileID == ""
 	if fileID == "" {
@@ -75,7 +127,7 @@ func (c *Client) UploadFile(ctx context.Context, options UploadOptions) (*Upload
 		zap.Int64("size", upload.size),
 	)
 
-	uploadToken, err := c.getUploadToken(ctx, fileInfo, defaultString(options.Language, defaultLanguage))
+	uploadToken, err := c.getUploadToken(ctx, fileInfo, language)
 	if err != nil {
 		c.logger.Debug("upload token request failed",
 			zap.String("file_id", fileID),
@@ -95,7 +147,7 @@ func (c *Client) UploadFile(ctx context.Context, options UploadOptions) (*Upload
 		FileHeader:  fileHeader,
 		DriveUpload: true,
 		UploadToken: uploadToken,
-		Language:    defaultString(options.Language, defaultLanguage),
+		Language:    language,
 	})
 	if err != nil {
 		c.logger.Debug("upload prepare failed",
@@ -126,68 +178,82 @@ func (c *Client) UploadFile(ctx context.Context, options UploadOptions) (*Upload
 		zap.Int("num_blocks", prepare.NumBlocks),
 	)
 
-	blocks, err := computeBlocks(upload.reader, upload.size, prepare.BlockSize)
+	return &uploadSession{
+		uploadToken: uploadToken,
+		prepare:     prepare,
+	}, nil
+}
+
+func (c *Client) planUploadBlocks(upload *uploadSource, session *uploadSession) ([]uploadBlock, error) {
+	blocks, err := computeBlocks(upload.reader, upload.size, session.prepare.BlockSize)
 	if err != nil {
 		c.logger.Debug("upload block computation failed",
-			zap.String("upload_id", prepare.UploadID),
-			zap.Int64("block_size", prepare.BlockSize),
+			zap.String("upload_id", session.prepare.UploadID),
+			zap.Int64("block_size", session.prepare.BlockSize),
 			zap.Error(err),
 		)
 		return nil, err
 	}
 	c.logger.Debug("upload blocks computed",
-		zap.String("upload_id", prepare.UploadID),
-		zap.Int64("block_size", prepare.BlockSize),
+		zap.String("upload_id", session.prepare.UploadID),
+		zap.Int64("block_size", session.prepare.BlockSize),
 		zap.Int("num_blocks", len(blocks)),
 	)
-	if len(blocks) != prepare.NumBlocks {
+	if len(blocks) != session.prepare.NumBlocks {
 		c.logger.Debug("upload block count mismatch",
-			zap.String("upload_id", prepare.UploadID),
-			zap.Int("prepared_num_blocks", prepare.NumBlocks),
+			zap.String("upload_id", session.prepare.UploadID),
+			zap.Int("prepared_num_blocks", session.prepare.NumBlocks),
 			zap.Int("computed_num_blocks", len(blocks)),
 		)
-		return nil, fmt.Errorf("prepare response num_blocks=%d does not match computed blocks=%d", prepare.NumBlocks, len(blocks))
+		return nil, fmt.Errorf("prepare response num_blocks=%d does not match computed blocks=%d", session.prepare.NumBlocks, len(blocks))
 	}
 
-	neededBlocks, err := c.getNeededUploadBlocks(ctx, prepare.UploadID, blocks, defaultString(options.Language, defaultLanguage))
+	return blocks, nil
+}
+
+func (c *Client) transferUploadBlocks(ctx context.Context, upload *uploadSource, session *uploadSession, blocks []uploadBlock, language string) error {
+	neededBlocks, err := c.getNeededUploadBlocks(ctx, session.prepare.UploadID, blocks, language)
 	if err != nil {
 		c.logger.Debug("upload needed blocks request failed",
-			zap.String("upload_id", prepare.UploadID),
+			zap.String("upload_id", session.prepare.UploadID),
 			zap.Error(err),
 		)
-		return nil, err
+		return err
 	}
 	c.logger.Debug("upload needed blocks received",
-		zap.String("upload_id", prepare.UploadID),
+		zap.String("upload_id", session.prepare.UploadID),
 		zap.Int("needed_blocks", len(neededBlocks)),
 	)
 
-	if err := uploadNeededBlocks(ctx, c, upload.reader, prepare.UploadID, prepare.BlockSize, neededBlocks); err != nil {
+	if err := uploadNeededBlocks(ctx, c, upload.reader, session.prepare.UploadID, session.prepare.BlockSize, neededBlocks); err != nil {
 		c.logger.Debug("upload needed blocks failed",
-			zap.String("upload_id", prepare.UploadID),
+			zap.String("upload_id", session.prepare.UploadID),
 			zap.Error(err),
 		)
-		return nil, err
+		return err
 	}
-	c.logger.Debug("upload needed blocks completed", zap.String("upload_id", prepare.UploadID))
+	c.logger.Debug("upload needed blocks completed", zap.String("upload_id", session.prepare.UploadID))
+	return nil
+}
 
+func (c *Client) finalizeUpload(ctx context.Context, session *uploadSession, options UploadOptions, language string) error {
 	if err := c.finishSpaceUpload(ctx, finishSpaceUploadRequest{
-		UploadID:           prepare.UploadID,
-		NumBlocks:          prepare.NumBlocks,
-		VHID:               prepare.VHID,
+		UploadID:           session.prepare.UploadID,
+		NumBlocks:          session.prepare.NumBlocks,
+		VHID:               session.prepare.VHID,
 		RiskDetectionExtra: riskDetectionExtra(),
-		Language:           defaultString(options.Language, defaultLanguage),
+		Language:           language,
 	}); err != nil {
 		c.logger.Debug("upload space finish failed",
-			zap.String("upload_id", prepare.UploadID),
-			zap.String("vhid", prepare.VHID),
+			zap.String("upload_id", session.prepare.UploadID),
+			zap.String("vhid", session.prepare.VHID),
 			zap.Error(err),
 		)
-		return nil, err
+		return err
 	}
 	c.logger.Debug("upload space finish completed",
-		zap.String("upload_id", prepare.UploadID),
-		zap.String("vhid", prepare.VHID),
+		zap.String("upload_id", session.prepare.UploadID),
+		zap.String("vhid", session.prepare.VHID),
 	)
 
 	autoTranscribe := true
@@ -197,44 +263,29 @@ func (c *Client) UploadFile(ctx context.Context, options UploadOptions) (*Upload
 	if err := c.finishMinutesUpload(ctx, finishMinutesUploadRequest{
 		AutoTranscribe: autoTranscribe,
 		Language:       defaultString(options.TranscribeLanguage, "mixed"),
-		NumBlocks:      prepare.NumBlocks,
-		ObjectToken:    prepare.ObjectToken,
-		UploadID:       prepare.UploadID,
-		UploadToken:    uploadToken,
-		VHID:           prepare.VHID,
+		NumBlocks:      session.prepare.NumBlocks,
+		ObjectToken:    session.prepare.ObjectToken,
+		UploadID:       session.prepare.UploadID,
+		UploadToken:    session.uploadToken,
+		VHID:           session.prepare.VHID,
 	}); err != nil {
 		c.logger.Debug("upload minutes finish failed",
-			zap.String("upload_id", prepare.UploadID),
-			zap.String("object_token", prepare.ObjectToken),
-			zap.String("vhid", prepare.VHID),
+			zap.String("upload_id", session.prepare.UploadID),
+			zap.String("object_token", session.prepare.ObjectToken),
+			zap.String("vhid", session.prepare.VHID),
 			zap.Bool("auto_transcribe", autoTranscribe),
 			zap.Error(err),
 		)
-		return nil, err
+		return err
 	}
 	c.logger.Debug("upload minutes finish completed",
-		zap.String("upload_id", prepare.UploadID),
-		zap.String("object_token", prepare.ObjectToken),
-		zap.String("vhid", prepare.VHID),
+		zap.String("upload_id", session.prepare.UploadID),
+		zap.String("object_token", session.prepare.ObjectToken),
+		zap.String("vhid", session.prepare.VHID),
 		zap.Bool("auto_transcribe", autoTranscribe),
 	)
 
-	result := &UploadResult{
-		ObjectToken: prepare.ObjectToken,
-		UploadID:    prepare.UploadID,
-		VHID:        prepare.VHID,
-		UploadToken: uploadToken,
-		NumBlocks:   prepare.NumBlocks,
-	}
-	c.logger.Debug("upload file completed",
-		zap.String("name", upload.name),
-		zap.String("object_token", result.ObjectToken),
-		zap.String("upload_id", result.UploadID),
-		zap.String("vhid", result.VHID),
-		zap.Int("num_blocks", result.NumBlocks),
-		zap.Bool("upload_token_present", result.UploadToken != ""),
-	)
-	return result, nil
+	return nil
 }
 
 func (c *Client) getUploadToken(ctx context.Context, fileInfo, language string) (string, error) {
@@ -485,6 +536,21 @@ type uploadSource struct {
 	reader io.ReadSeeker
 	size   int64
 	name   string
+}
+
+type uploadSession struct {
+	uploadToken string
+	prepare     *prepareUploadResponse
+}
+
+func (s *uploadSession) result() *UploadResult {
+	return &UploadResult{
+		ObjectToken: s.prepare.ObjectToken,
+		UploadID:    s.prepare.UploadID,
+		VHID:        s.prepare.VHID,
+		UploadToken: s.uploadToken,
+		NumBlocks:   s.prepare.NumBlocks,
+	}
 }
 
 func newUploadSource(options UploadOptions) (*uploadSource, error) {

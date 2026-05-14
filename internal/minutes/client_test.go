@@ -2,11 +2,13 @@ package minutes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -56,6 +58,36 @@ func TestNewClientDefaultsBaseURLs(t *testing.T) {
 	}
 	if client.spaceBaseURL != defaultSpaceBaseURL {
 		t.Fatalf("spaceBaseURL = %q, want %q", client.spaceBaseURL, defaultSpaceBaseURL)
+	}
+}
+
+func TestNewClientUsesDefaultHTTPTimeout(t *testing.T) {
+	client, err := NewClient(Config{Cookie: testCookie})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v, want nil", err)
+	}
+	if client.httpClient == nil {
+		t.Fatal("httpClient = nil, want default client")
+	}
+	if client.httpClient.Timeout != defaultClientTimeout {
+		t.Fatalf("httpClient.Timeout = %s, want %s", client.httpClient.Timeout, defaultClientTimeout)
+	}
+	if defaultClientTimeout <= 0 || defaultClientTimeout > time.Minute {
+		t.Fatalf("defaultClientTimeout = %s, want positive bounded timeout", defaultClientTimeout)
+	}
+}
+
+func TestNewClientPreservesProvidedHTTPClient(t *testing.T) {
+	httpClient := &http.Client{Timeout: 7 * time.Second}
+	client, err := NewClient(Config{
+		Cookie:     testCookie,
+		HTTPClient: httpClient,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v, want nil", err)
+	}
+	if client.httpClient != httpClient {
+		t.Fatalf("httpClient = %#v, want provided client", client.httpClient)
 	}
 }
 
@@ -110,6 +142,13 @@ func TestClientReturnsHTTPStatusError(t *testing.T) {
 			t.Fatalf("error = %q, want to contain %q", err.Error(), want)
 		}
 	}
+	var statusErr *HTTPStatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("error type = %T, want *HTTPStatusError", err)
+	}
+	if statusErr.Method != http.MethodGet || !strings.HasPrefix(statusErr.RequestURI, "/minutes/api/space/list") || statusErr.StatusCode != http.StatusTeapot {
+		t.Fatalf("HTTPStatusError = %#v, want request and status details", statusErr)
+	}
 }
 
 func TestClientReturnsServerCodeError(t *testing.T) {
@@ -129,6 +168,13 @@ func TestClientReturnsServerCodeError(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error = %q, want to contain %q", err.Error(), want)
 		}
+	}
+	var serverErr *ServerCodeError
+	if !errors.As(err, &serverErr) {
+		t.Fatalf("error type = %T, want *ServerCodeError", err)
+	}
+	if serverErr.Method != http.MethodGet || !strings.HasPrefix(serverErr.RequestURI, "/minutes/api/space/list") || serverErr.Code != 123 || serverErr.Message != "expired" {
+		t.Fatalf("ServerCodeError = %#v, want request and server details", serverErr)
 	}
 }
 

@@ -89,10 +89,10 @@ func runUploadCommand(cmd *cobra.Command, args []string) error {
 	logger := loggerFromCommand(cmd)
 	logger.Debug("upload command started", zap.String("path", args[0]))
 
-	config, ok := configFromCommand(cmd)
-	if !ok {
+	runtime, err := runtimeFromCommand(cmd)
+	if err != nil {
 		logger.Debug("upload command missing config")
-		return errors.New("config is required")
+		return err
 	}
 
 	filePath := args[0]
@@ -104,16 +104,7 @@ func runUploadCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	clientConfig := minutes.Config{
-		BaseURL:      config.BaseURL,
-		SpaceBaseURL: config.SpaceBaseURL,
-		Cookie:       config.Cookie,
-	}
-	if logger, ok := loggerFromContext(cmd.Context()); ok {
-		clientConfig.Logger = logger
-	}
-
-	client, err := newUploadMinutesClient(clientConfig)
+	client, err := newUploadMinutesClient(runtime.ClientConfig)
 	if err != nil {
 		logger.Debug("upload client initialization failed", zap.Error(err))
 		return err
@@ -131,7 +122,7 @@ func runUploadCommand(cmd *cobra.Command, args []string) error {
 		return errors.New("upload result is empty")
 	}
 
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Uploaded %s %s\n", result.ObjectToken, uploadMinutesURL(config.BaseURL, result.ObjectToken)); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Uploaded %s %s\n", result.ObjectToken, uploadMinutesURL(runtime.Config.BaseURL, result.ObjectToken)); err != nil {
 		return err
 	}
 
@@ -196,5 +187,9 @@ func validateUploadFile(filePath string, logger *zap.Logger) error {
 }
 
 func uploadMinutesURL(baseURL, objectToken string) string {
-	return configBaseURLOrDefault(baseURL, defaultBaseURL) + "/minutes/" + objectToken
+	baseURL, _, err := minutes.NormalizeBaseURLOrDefault("base_url", baseURL, defaultBaseURL)
+	if err != nil {
+		baseURL = defaultBaseURL
+	}
+	return baseURL + "/minutes/" + objectToken
 }

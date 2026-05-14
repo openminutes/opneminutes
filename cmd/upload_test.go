@@ -598,6 +598,12 @@ func TestUploadMinutesURL(t *testing.T) {
 			objectToken: "object-1",
 			want:        "https://meetings.feishu.cn/minutes/object-1",
 		},
+		{
+			name:        "invalid base url falls back to default",
+			baseURL:     "://bad",
+			objectToken: "object-1",
+			want:        "https://meetings.feishu.cn/minutes/object-1",
+		},
 	}
 
 	for _, tt := range tests {

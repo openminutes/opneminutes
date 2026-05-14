@@ -60,10 +60,10 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 	logger := loggerFromCommand(cmd)
 	logger.Debug("list command started")
 
-	config, ok := configFromCommand(cmd)
-	if !ok {
+	runtime, err := runtimeFromCommand(cmd)
+	if err != nil {
 		logger.Debug("list command missing config")
-		return errors.New("config is required")
+		return err
 	}
 
 	size, err := cmd.Flags().GetInt("size")
@@ -85,16 +85,7 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	clientConfig := minutes.Config{
-		BaseURL:      config.BaseURL,
-		SpaceBaseURL: config.SpaceBaseURL,
-		Cookie:       config.Cookie,
-	}
-	if logger, ok := loggerFromContext(cmd.Context()); ok {
-		clientConfig.Logger = logger
-	}
-
-	client, err := newListMinutesClient(clientConfig)
+	client, err := newListMinutesClient(runtime.ClientConfig)
 	if err != nil {
 		logger.Debug("list client initialization failed", zap.Error(err))
 		return err
@@ -138,7 +129,7 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	for _, item := range items {
-		if _, err := fmt.Fprintf(out, "%s %s %s\n", item.ObjectToken, listTopic(item.Topic), listURL(item, config.BaseURL)); err != nil {
+		if _, err := fmt.Fprintf(out, "%s %s %s\n", item.ObjectToken, listTopic(item.Topic), listURL(item, runtime.Config.BaseURL)); err != nil {
 			return err
 		}
 	}
@@ -213,6 +204,9 @@ func listURL(item minutes.Minute, baseURL string) string {
 		return rawURL
 	}
 
-	baseURL = configBaseURLOrDefault(baseURL, defaultBaseURL)
+	baseURL, _, err := minutes.NormalizeBaseURLOrDefault("base_url", baseURL, defaultBaseURL)
+	if err != nil {
+		baseURL = defaultBaseURL
+	}
 	return baseURL + "/minutes/" + item.ObjectToken
 }

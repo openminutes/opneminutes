@@ -559,6 +559,15 @@ func TestListCommandReturnsListError(t *testing.T) {
 	}
 }
 
+func TestListURLDefaultsInvalidBaseURL(t *testing.T) {
+	item := minutes.Minute{ObjectToken: "object-1"}
+	got := listURL(item, "://bad")
+	want := defaultBaseURL + "/minutes/object-1"
+	if got != want {
+		t.Fatalf("listURL() = %q, want %q", got, want)
+	}
+}
+
 func TestListCommandAllReturnsListError(t *testing.T) {
 	wantErr := errors.New("list all failed")
 	withListMinutesClient(t, func(config minutes.Config) (listMinutesClient, error) {

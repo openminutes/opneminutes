@@ -318,6 +318,81 @@ func TestUploadFileFailureStages(t *testing.T) {
 	}
 }
 
+func TestUploadPhaseHelpers(t *testing.T) {
+	t.Run("prepare source returns base64 header and rewinds", func(t *testing.T) {
+		client := newTestClient(t, "https://example.test", "https://space.example.test")
+		reader := bytes.NewReader([]byte("abc"))
+		header, err := client.prepareUploadSource(&uploadSource{
+			reader: reader,
+			size:   3,
+			name:   "clip.mp4",
+		})
+		if err != nil {
+			t.Fatalf("prepareUploadSource() error = %v, want nil", err)
+		}
+		if header != base64.StdEncoding.EncodeToString([]byte("abc")) {
+			t.Fatalf("header = %q, want encoded file header", header)
+		}
+		position, err := reader.Seek(0, io.SeekCurrent)
+		if err != nil {
+			t.Fatalf("Seek() error = %v, want nil", err)
+		}
+		if position != 0 {
+			t.Fatalf("reader position = %d, want rewind to start", position)
+		}
+	})
+
+	t.Run("plan blocks validates prepared count", func(t *testing.T) {
+		client := newTestClient(t, "https://example.test", "https://space.example.test")
+		upload := &uploadSource{
+			reader: bytes.NewReader([]byte("abc")),
+			size:   3,
+			name:   "clip.mp4",
+		}
+		session := &uploadSession{prepare: &prepareUploadResponse{
+			UploadID:  "upload-1",
+			BlockSize: 5,
+			NumBlocks: 1,
+		}}
+		blocks, err := client.planUploadBlocks(upload, session)
+		if err != nil {
+			t.Fatalf("planUploadBlocks() error = %v, want nil", err)
+		}
+		if !blocksEqual(blocks, expectedUploadBlocks(t, []byte("abc"), 5)) {
+			t.Fatalf("blocks = %#v, want computed upload blocks", blocks)
+		}
+
+		session.prepare.NumBlocks = 2
+		_, err = client.planUploadBlocks(upload, session)
+		if err == nil || !strings.Contains(err.Error(), "does not match computed blocks") {
+			t.Fatalf("planUploadBlocks() error = %v, want block count mismatch", err)
+		}
+	})
+
+	t.Run("session result preserves identifiers", func(t *testing.T) {
+		session := &uploadSession{
+			uploadToken: "upload-token",
+			prepare: &prepareUploadResponse{
+				VHID:        "vhid-1",
+				ObjectToken: "object-1",
+				UploadID:    "upload-1",
+				NumBlocks:   3,
+			},
+		}
+		got := session.result()
+		want := &UploadResult{
+			ObjectToken: "object-1",
+			UploadID:    "upload-1",
+			VHID:        "vhid-1",
+			UploadToken: "upload-token",
+			NumBlocks:   3,
+		}
+		if *got != *want {
+			t.Fatalf("result = %#v, want %#v", got, want)
+		}
+	})
+}
+
 func TestUploadRequestCreationAndMarshalErrors(t *testing.T) {
 	client := newTestClient(t, "https://example.test", "https://space.example.test")
 	ctx := context.Background()

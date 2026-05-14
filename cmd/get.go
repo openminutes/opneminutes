@@ -122,22 +122,13 @@ func runGetCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	config, ok := configFromCommand(cmd)
-	if !ok {
+	runtime, err := runtimeFromCommand(cmd)
+	if err != nil {
 		logger.Debug("get command missing config")
-		return errors.New("config is required")
+		return err
 	}
 
-	clientConfig := minutes.Config{
-		BaseURL:      config.BaseURL,
-		SpaceBaseURL: config.SpaceBaseURL,
-		Cookie:       config.Cookie,
-	}
-	if logger, ok := loggerFromContext(cmd.Context()); ok {
-		clientConfig.Logger = logger
-	}
-
-	client, err := newGetMinutesClient(clientConfig)
+	client, err := newGetMinutesClient(runtime.ClientConfig)
 	if err != nil {
 		logger.Debug("get client initialization failed", zap.Error(err))
 		return err
